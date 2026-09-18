@@ -3,6 +3,8 @@ open Lake DSL
 
 package codex32 where
   version := v!"0.1.0"
+  license := "MIT"
+  licenseFiles := #["LICENSE", "spec/LICENSE"]
 
 @[default_target]
 lean_lib Codex32
