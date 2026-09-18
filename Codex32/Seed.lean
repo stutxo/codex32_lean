@@ -45,8 +45,12 @@ def ofBytes (bytes : List UInt8) : Except Error Seed :=
   if h : SupportedSeedLength bytes.length then .ok ⟨bytes, h⟩
   else .error .unsupportedSeedLength
 
+/-- Supported master-seed payload lengths, measured in five-bit symbols. -/
+def supportedPayloadLengths : List Nat :=
+  [26, 32, 39, 45, 52, 103]
+
 def validPayloadLength (n : Nat) : Bool :=
-  [26, 32, 39, 45, 52, 103].contains n
+  supportedPayloadLengths.contains n
 
 /-- Application parser corresponding to the BIP's `ms32_decode`, including shares. -/
 def parse (s : String) : Except Error Message := do

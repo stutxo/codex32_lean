@@ -118,7 +118,7 @@ theorem checked_secret_translated (a b : Shares.ValidatedShareSet)
 validates. Its recovered secret retains the prescribed payload length. -/
 theorem observeFresh_success (threshold : Threshold) (identifier : Identifier)
     (length : Nat) (nonzero : threshold.count ≠ 0)
-    (supported : length ∈ [26, 32, 39, 45, 52, 103])
+    (supported : length ∈ Seed.supportedPayloadLengths)
     (entropy : List (List Symbol)) (shape : Uniform.EntropyShape threshold.count length entropy)
     (observed : List Symbol) :
     ∃ payload views, observeFresh threshold identifier entropy observed = .ok (payload, views) ∧
@@ -134,7 +134,7 @@ secret payloads in the corresponding joint event. -/
 theorem fresh_event_translation (threshold : Threshold) (identifier : Identifier)
     (s t : List Symbol) (sameLength : s.length = t.length)
     (nonzero : threshold.count ≠ 0)
-    (supported : s.length ∈ [26, 32, 39, 45, 52, 103])
+    (supported : s.length ∈ Seed.supportedPayloadLengths)
     (observed : List Symbol) (secretNotObserved : (16 : Symbol) ∉ observed)
     (fewObserved : observed.length < threshold.count)
     (entropy : List (List Symbol))
@@ -187,7 +187,7 @@ The common sample-space denominator is `32^(threshold.count * s.length)`. -/
 theorem initializeFresh_secrecy (threshold : Threshold) (identifier : Identifier)
     (s t : List Symbol) (sameLength : s.length = t.length)
     (nonzero : threshold.count ≠ 0)
-    (supported : s.length ∈ [26, 32, 39, 45, 52, 103])
+    (supported : s.length ∈ Seed.supportedPayloadLengths)
     (observed : List Symbol) (secretNotObserved : (16 : Symbol) ∉ observed)
     (fewObserved : observed.length < threshold.count) (event : List Message → Bool) :
     ((Uniform.allEntropy threshold.count s.length).map

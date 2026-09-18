@@ -296,7 +296,8 @@ private theorem seed_payload_iff (m : Message) :
     Seed.validPayloadLength m.payload.length = true ↔
       (m.payload.length = 26 ∨ m.payload.length = 32 ∨ m.payload.length = 39 ∨
         m.payload.length = 45 ∨ m.payload.length = 52 ∨ m.payload.length = 103) := by
-  simp only [Seed.validPayloadLength, List.contains_cons, List.contains_nil,
+  simp only [Seed.validPayloadLength, Seed.supportedPayloadLengths,
+    List.contains_cons, List.contains_nil,
     Bool.or_eq_true, beq_iff_eq, Bool.false_eq_true, or_false]
 
 /-- The application parser accepts exactly the declarative BIP format with

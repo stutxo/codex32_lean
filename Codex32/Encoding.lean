@@ -26,6 +26,12 @@ def create (threshold : Threshold) (identifier : Identifier) (index : Symbol)
 def data (m : Message) : List Symbol :=
   [m.threshold.toSymbol] ++ m.identifier.symbols ++ [m.index] ++ m.payload
 
+theorem data_length_le (m : Message) : m.data.length ≤ 1003 := by
+  have := m.lengthValid
+  simp only [data, List.length_append, List.length_cons, List.length_nil,
+    m.identifier.length_eq]
+  omega
+
 end Message
 
 namespace Encoding
@@ -58,8 +64,7 @@ def parse (s : String) : Except Error Message := do
 /-- Lowercase is canonical. All payload symbols, including padding, are preserved. -/
 def serialize (m : Message) : String :=
   let data := m.data
-  let checksum := if 5 + data.length + 13 ≤ 93 then Checksum.createRegular data
-    else Checksum.createLong data
+  let checksum := Checksum.createBounded data m.data_length_le
   "ms1" ++ Alphabet.encodeList (data ++ checksum)
 
 def serializeUpper (m : Message) : String := (serialize m).toUpper

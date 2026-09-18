@@ -131,22 +131,12 @@ theorem serialize_uses_create (m : Message) (checksum : List Symbol)
     (h : Checksum.create m.data = .ok checksum) :
     Encoding.serialize m = "ms1" ++ Alphabet.encodeList (m.data ++ checksum) := by
   unfold Checksum.create at h
-  unfold Encoding.serialize
-  split at h <;> rename_i hregular
-  · cases h
-    simp only [hregular, ↓reduceIte]
-  · split at h
-    · cases h
-      simp only [hregular, ↓reduceIte]
-    · cases h
+  rw [dite_eq_left m.data_length_le] at h
+  cases h
+  rfl
 
 theorem parse_serialize (m : Message) : Encoding.parse (Encoding.serialize m) = .ok m := by
-  have hlen : m.data.length ≤ 1003 := by
-    have := m.lengthValid
-    simp only [Message.data, List.length_append, List.length_cons, List.length_nil,
-      m.identifier.length_eq]
-    omega
-  obtain ⟨checksum, hcreate⟩ := (Checksum.create_exists_iff m.data).2 hlen
+  obtain ⟨checksum, hcreate⟩ := (Checksum.create_exists_iff m.data).2 m.data_length_le
   rw [serialize_uses_create m checksum hcreate]
   exact parse_encoded_data m checksum
     (Checksum.create_selects_valid_length m.data checksum hcreate)

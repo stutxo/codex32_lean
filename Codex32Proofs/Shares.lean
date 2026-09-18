@@ -1,5 +1,4 @@
 import Codex32.Shares
-import Codex32Test.Vectors
 
 /-! Initial share proofs, kept separate from executable code.
 All finite calculations below use the kernel's `decide`, never native evaluation.
@@ -13,30 +12,32 @@ namespace Codex32.Proofs
 set_option maxRecDepth 100000
 set_option maxHeartbeats 0
 
-theorem field_add_zero : ∀ a : Symbol, Field.add a 0 = a := by decide
-theorem field_add_self : ∀ a : Symbol, Field.add a a = 0 := by decide
-theorem field_mul_one : ∀ a : Symbol, Field.mul a 1 = a := by decide
-theorem field_mul_zero : ∀ a : Symbol, Field.mul a 0 = 0 := by decide
-theorem field_inv_zero : Field.inv 0 = 0 := by decide
-theorem field_mul_inverse : ∀ a : Symbol, a ≠ 0 → Field.mul a (Field.inv a) = 1 := by
-  decide
-theorem field_inverse_nonzero : ∀ a : Symbol, a ≠ 0 → Field.inv a ≠ 0 := by decide
+/-- Messages are equal when their public data fields agree. -/
+theorem message_ext (a b : Message) (threshold : a.threshold = b.threshold)
+    (identifier : a.identifier = b.identifier) (index : a.index = b.index)
+    (payload : a.payload = b.payload) : a = b := by
+  cases a
+  cases b
+  cases threshold
+  cases identifier
+  cases index
+  cases payload
+  rfl
 
-private theorem field_add_value (a b : Symbol) :
-    (Field.add a b).val = a.val ^^^ b.val := by
-  apply Nat.mod_eq_of_lt
-  exact Nat.xor_lt_two_pow (n := 5) a.isLt b.isLt
-
-theorem field_add_comm (a b : Symbol) : Field.add a b = Field.add b a := by
-  apply Fin.ext
-  simp only [field_add_value, Nat.xor_comm]
-
-theorem field_add_assoc (a b c : Symbol) :
-    Field.add (Field.add a b) c = Field.add a (Field.add b c) := by
-  apply Fin.ext
-  simp only [field_add_value, Nat.xor_assoc]
-
-theorem field_mul_comm : ∀ a b : Symbol, Field.mul a b = Field.mul b a := by decide
+/-- Revalidating a checked set returns the same checked set. -/
+theorem validate_checked (checked : Shares.ValidatedShareSet) :
+    Shares.validate checked.messages = .ok checked := by
+  cases checked with
+  | mk messages first firstPresent nonzeroThreshold exactCount sameThreshold
+      sameIdentifier sameLength distinctIndices =>
+    cases messages with
+    | nil => simp at firstPresent
+    | cons head rest =>
+      have equal : head = first := by simpa using firstPresent
+      subst head
+      simp only [Shares.validate, List.head?_cons, nonzeroThreshold, exactCount,
+        distinctIndices, ↓reduceDIte]
+      rw [dite_eq_left sameThreshold, dite_eq_left sameIdentifier, dite_eq_left sameLength]
 
 /-- The checked set retains exactly the caller's messages. -/
 theorem validate_preserves_messages (shares : List Message)
@@ -147,17 +148,6 @@ theorem recover_generated_threshold_two_payload (secret random : List Symbol)
       secret := by
   simp only [recover_generated_threshold_two_column]
   exact List.map_fst_zip (by omega)
-
-/-- A complete official-vector recovery through the public parser, share
-validator, interpolation, and serializer, checked by the Lean kernel. -/
-theorem official_vector_two_recovery :
-    (do
-      let a ← Encoding.parse Vectors.vector2a
-      let c ← Encoding.parse Vectors.vector2c
-      let secret ← Shares.recover [a, c]
-      pure (Encoding.serialize secret) : Except Error String).toOption =
-      some Vectors.vector2s.toLower := by
-  decide +kernel
 
 private def twoPointPayload (a b : List Symbol) (i j target : Symbol) : List Symbol :=
   (List.range a.length).map fun n =>

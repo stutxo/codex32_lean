@@ -21,6 +21,6 @@ jobs:
           echo "$RUNNER_TEMP/lean/bin" >> "$GITHUB_PATH"
       - run: lake build
       - run: lake test
-      - run: lake build Codex32Proofs
+      - run: lake build Codex32Proofs Codex32Test.VectorProofs
       - run: lake env lean scripts/Audit.lean
       - run: bash scripts/test-cli.sh

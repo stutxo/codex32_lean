@@ -83,31 +83,6 @@ private theorem generated_column (original generated : Shares.ValidatedShareSet)
   simp [messageColumn, generatedFrom, List.map_map, checked_interpolate_index,
     checked_interpolate_column original _ column bound]
 
-private theorem message_eq (a b : Message) (threshold : a.threshold = b.threshold)
-    (identifier : a.identifier = b.identifier) (index : a.index = b.index)
-    (payload : a.payload = b.payload) : a = b := by
-  cases a
-  cases b
-  cases threshold
-  cases identifier
-  cases index
-  cases payload
-  rfl
-
-private theorem validate_checked (checked : Shares.ValidatedShareSet) :
-    Shares.validate checked.messages = .ok checked := by
-  cases checked with
-  | mk messages first firstPresent nonzeroThreshold exactCount sameThreshold
-      sameIdentifier sameLength distinctIndices =>
-    cases messages with
-    | nil => simp at firstPresent
-    | cons head rest =>
-      have equal : head = first := by simpa using firstPresent
-      subst head
-      simp only [Shares.validate, List.head?_cons, nonzeroThreshold, exactCount,
-        distinctIndices, ↓reduceDIte]
-      rw [dite_eq_left sameThreshold, dite_eq_left sameIdentifier, dite_eq_left sameLength]
-
 private def reinterpolatedSet (original : Shares.ValidatedShareSet)
     (index : Symbol) (rest : List Symbol)
     (count : (index :: rest).length = original.messages.length)
@@ -156,7 +131,7 @@ theorem checked_reinterpolate_message (original generated : Shares.ValidatedShar
     have ho := original.exactCount
     rw [threshold] at hg
     simpa [generatedFrom, ho] using hg
-  apply message_eq
+  apply message_ext
   · rw [checked_interpolate_threshold, checked_interpolate_threshold, threshold]
   · rw [checked_interpolate_identifier, checked_interpolate_identifier, identifier]
   · rw [checked_interpolate_index, checked_interpolate_index]

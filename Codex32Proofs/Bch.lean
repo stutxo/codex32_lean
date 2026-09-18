@@ -14,7 +14,9 @@ every root of `g`, and the BCH bound (`sparse_zero`) forces any equal-length pai
 strings differing in at most eight symbols to be identical. This is the BIP's
 "guarantees detection of any error changing at most 8 symbols" claim, proved
 rather than assumed. All finite generator/chunk calculations use the kernel's
-`decide`.
+`decide`. Shared lemmas handle register updates, the recurrence, and the BCH
+bound; the regular and long theorems instantiate these with their concrete
+constants and retain their existing interfaces.
 -/
 
 namespace Codex32
@@ -28,9 +30,6 @@ def longLow : List Symbol := [23, 4, 22, 5, 6, 21, 23, 6, 21, 25, 9, 26, 25, 10,
 theorem regularGenerator_eq : GF1024.regularGenerator = regularLow ++ [1] := rfl
 
 theorem longGenerator_eq : GF1024.longGenerator = longLow ++ [1] := rfl
-
-/-- The initial residue of both polymod recurrences. -/
-def initResidue : Nat := 0x23181b3
 
 /-- Read the polynomial of the register: chunk `i` is the coefficient of `xⁱ`. -/
 def unpack (n : Nat) (r : Nat) : List Symbol :=
@@ -136,15 +135,6 @@ private theorem chunk_xor (a b : Nat) (j : Nat) :
     h31, Nat.testBit_two_pow_sub_one]
   by_cases h : i < 5 <;> simp [h]
 
-/-- Chunking a conditional XOR. -/
-private theorem chunk_ite (c : Bool) (a g : Nat) (j : Nat) :
-    Symbol.ofNat (((if c then a ^^^ g else a) >>> (5 * j)) &&& 31) =
-      Field.add (Symbol.ofNat ((a >>> (5 * j)) &&& 31))
-        (if c then Symbol.ofNat ((g >>> (5 * j)) &&& 31) else 0) := by
-  cases c
-  · simp [Field.add_zero]
-  · simp [chunk_xor]
-
 /-- The chunk of a left-shifted register: zero at `j = 0`, the previous chunk
 otherwise. -/
 private theorem chunk_shiftLeft (x : Nat) (j : Nat) :
@@ -186,28 +176,6 @@ private theorem chunk_shiftLeft (x : Nat) (j : Nat) :
         simp [hi]
     rw [hb]
 
-/-- Chunks of the mask-covered part agree with the register below the mask. -/
-private theorem chunk_mask (r : Nat) (j : Nat) (hj : j < 12) :
-    Symbol.ofNat (((r &&& 0x0fffffffffffffff) >>> (5 * j)) &&& 31) =
-      Symbol.ofNat ((r >>> (5 * j)) &&& 31) := by
-  have hmask : (0x0fffffffffffffff : Nat) = 2 ^ 60 - 1 := by decide
-  have h31 : (31 : Nat) = 2 ^ 5 - 1 := by decide
-  apply Fin.ext
-  have hb : ((r &&& 0x0fffffffffffffff) >>> (5 * j)) &&& 31 = (r >>> (5 * j)) &&& 31 := by
-    apply Nat.eq_of_testBit_eq
-    intro i
-    by_cases hi : i < 5
-    · rw [Nat.testBit_and, Nat.testBit_shiftRight, Nat.testBit_and, Nat.testBit_and,
-        Nat.testBit_shiftRight, h31, Nat.testBit_two_pow_sub_one]
-      simp only [hi, decide_true, Bool.and_true]
-      rw [hmask, Nat.testBit_two_pow_sub_one]
-      have hk : 5 * j + i < 60 := by omega
-      simp [hk]
-    · have hi5 : 5 ≤ i := by omega
-      rw [Nat.testBit_and, Nat.testBit_and, h31, Nat.testBit_two_pow_sub_one]
-      simp [hi]
-  rw [hb]
-
 /-- Chunks of a value symbol vanish above position zero. -/
 private theorem chunk_val (v : Symbol) (j : Nat) :
     Symbol.ofNat ((v.val >>> (5 * j)) &&& 31) = if j = 0 then v else 0 := by
@@ -235,18 +203,6 @@ private theorem chunk_val (v : Symbol) (j : Nat) :
       rfl
     rw [hb]
     rfl
-
-/-- The chunk of the `next` part of a step: the value symbol at `j = 0`, the
-previous register chunk otherwise. -/
-private theorem next_chunk (r : Nat) (v : Symbol) (j : Nat) (hj : j < 13) :
-    Symbol.ofNat (((((r &&& 0x0fffffffffffffff) <<< 5) ^^^ v.val) >>> (5 * j)) &&& 31) =
-      if j = 0 then v else Symbol.ofNat ((r >>> (5 * (j - 1))) &&& 31) := by
-  rw [chunk_xor, chunk_shiftLeft, chunk_val]
-  by_cases hj0 : j = 0
-  · subst hj0
-    simp [Field.zero_add]
-  · have hj1 : 1 ≤ j := by omega
-    simp [hj0, Field.add_zero, chunk_mask r (j - 1) (by omega)]
 
 /-- The chunk of a fold of conditional XORs equals the conditional fold of the
 chunks. -/
@@ -412,41 +368,24 @@ theorem step_chunk (shift : Nat) (g0 g1 g2 g3 g4 : Nat) (low : List Symbol)
   simp only [List.zipIdx, List.foldl_cons, List.foldl_nil]
   rw [h0 j, h1 j, h2 j, h3 j, h4 j]
 
-/-- A generator constant vanishes in chunks above its width. -/
-private theorem regular_chunk_outside (i g : Nat) (_hi : i < 5) (hg : g < 2 ^ 65)
-    (j : Nat) (hj : 13 ≤ j) :
-    Symbol.ofNat ((g >>> (5 * j)) &&& 31) = Field.mul (Symbol.ofNat (2 ^ i)) (regularLow.getD j 0) := by
-  have hzero : g >>> (5 * j) = 0 := by
-    rw [Nat.shiftRight_eq_div_pow]
-    apply Nat.div_eq_of_lt
-    calc g < 2 ^ 65 := hg
-      _ ≤ 2 ^ (5 * j) := Nat.pow_le_pow_right (by decide) (by omega)
-  have hget : regularLow.getD j 0 = 0 := by
-    have hnone : regularLow[j]? = none := by
+/-- Extend a finite generator-chunk identity to all positions. Both the
+constant and the low polynomial vanish beyond the register width. -/
+private theorem chunk_all (n i g : Nat) (low : List Symbol) (hlen : low.length = n)
+    (hg : g < 2 ^ (5 * n))
+    (hchunk : ∀ j : Fin n, Symbol.ofNat ((g >>> (5 * j.val)) &&& 31) =
+      Field.mul (Symbol.ofNat (2 ^ i)) (low.getD j.val 0)) (j : Nat) :
+    Symbol.ofNat ((g >>> (5 * j)) &&& 31) =
+      Field.mul (Symbol.ofNat (2 ^ i)) (low.getD j 0) := by
+  by_cases hj : j < n
+  · exact hchunk ⟨j, hj⟩
+  · have hzero : g >>> (5 * j) = 0 := by
+      rw [Nat.shiftRight_eq_div_pow]
+      apply Nat.div_eq_of_lt
+      exact Nat.lt_of_lt_of_le hg (Nat.pow_le_pow_right (by decide) (by omega))
+    have hnone : low[j]? = none := by
       rw [List.getElem?_eq_none]
-      simp [regularLow, hj]
-    simp [List.getD, hnone]
-  rw [hzero, hget]
-  simp [Field.mul_zero]
-  rfl
-
-/-- A long generator constant vanishes in chunks above its width. -/
-private theorem long_chunk_outside (i g : Nat) (_hi : i < 5) (hg : g < 2 ^ 75)
-    (j : Nat) (hj : 15 ≤ j) :
-    Symbol.ofNat ((g >>> (5 * j)) &&& 31) = Field.mul (Symbol.ofNat (2 ^ i)) (longLow.getD j 0) := by
-  have hzero : g >>> (5 * j) = 0 := by
-    rw [Nat.shiftRight_eq_div_pow]
-    apply Nat.div_eq_of_lt
-    calc g < 2 ^ 75 := hg
-      _ ≤ 2 ^ (5 * j) := Nat.pow_le_pow_right (by decide) (by omega)
-  have hget : longLow.getD j 0 = 0 := by
-    have hnone : longLow[j]? = none := by
-      rw [List.getElem?_eq_none]
-      simp [longLow, hj]
-    simp [List.getD, hnone]
-  rw [hzero, hget]
-  simp [Field.mul_zero]
-  rfl
+      omega
+    simp [hzero, List.getD, hnone, Field.mul_zero, Symbol.ofNat]
 
 /-- The regular generator constants as literal arguments. -/
 theorem regular_step_chunk (r : Nat) (v : Symbol) (hr : r < 2 ^ 65) (j : Fin 13) :
@@ -461,31 +400,13 @@ theorem regular_step_chunk (r : Nat) (v : Symbol) (hr : r < 2 ^ 65) (j : Fin 13)
     intro h
     have := j.isLt
     omega
-  have hout : ∀ (i g : Nat), i < 5 → g < 2 ^ 65 → ∀ j : Nat, 13 ≤ j →
-      Symbol.ofNat ((g >>> (5 * j)) &&& 31) = Field.mul (Symbol.ofNat (2 ^ i)) (regularLow.getD j 0) :=
-    regular_chunk_outside
   have h := step_chunk 60 0x19dc500ce73fde210 0x1bfae00def77fe529 0x1fbd920fffe7bee52
     0x1739640bdeee3fdad 0x07729a039cfc75f5a regularLow
-    (fun j => by
-      by_cases hjx : j < 13
-      · exact regular_chunk_0 ⟨j, hjx⟩
-      · exact hout 0 0x19dc500ce73fde210 (by decide) (by decide) j (by omega))
-    (fun j => by
-      by_cases hjx : j < 13
-      · exact regular_chunk_1 ⟨j, hjx⟩
-      · exact hout 1 0x1bfae00def77fe529 (by decide) (by decide) j (by omega))
-    (fun j => by
-      by_cases hjx : j < 13
-      · exact regular_chunk_2 ⟨j, hjx⟩
-      · exact hout 2 0x1fbd920fffe7bee52 (by decide) (by decide) j (by omega))
-    (fun j => by
-      by_cases hjx : j < 13
-      · exact regular_chunk_3 ⟨j, hjx⟩
-      · exact hout 3 0x1739640bdeee3fdad (by decide) (by decide) j (by omega))
-    (fun j => by
-      by_cases hjx : j < 13
-      · exact regular_chunk_4 ⟨j, hjx⟩
-      · exact hout 4 0x07729a039cfc75f5a (by decide) (by decide) j (by omega))
+    (chunk_all 13 0 0x19dc500ce73fde210 regularLow rfl (by decide) regular_chunk_0)
+    (chunk_all 13 1 0x1bfae00def77fe529 regularLow rfl (by decide) regular_chunk_1)
+    (chunk_all 13 2 0x1fbd920fffe7bee52 regularLow rfl (by decide) regular_chunk_2)
+    (chunk_all 13 3 0x1739640bdeee3fdad regularLow rfl (by decide) regular_chunk_3)
+    (chunk_all 13 4 0x07729a039cfc75f5a regularLow rfl (by decide) regular_chunk_4)
     r v (by rw [hmask] at *; exact hr) j.val hj
   rw [hmask, hgens]
   have hget : regularLow.getD j.val 0 = regularLow[j.val] := by
@@ -507,31 +428,13 @@ theorem long_step_chunk (r : Nat) (v : Symbol) (hr : r < 2 ^ 75) (j : Fin 15) :
     intro h
     have := j.isLt
     omega
-  have hout : ∀ (i g : Nat), i < 5 → g < 2 ^ 75 → ∀ j : Nat, 15 ≤ j →
-      Symbol.ofNat ((g >>> (5 * j)) &&& 31) = Field.mul (Symbol.ofNat (2 ^ i)) (longLow.getD j 0) :=
-    long_chunk_outside
   have h := step_chunk 70 0x3d59d273535ea62d897 0x7a9becb6361c6c51507 0x543f9b7e6c38d8a2a0e
     0x0c577eaeccf1990d13c 0x1887f74f8dc71b10651 longLow
-    (fun j => by
-      by_cases hjx : j < 15
-      · exact long_chunk_0 ⟨j, hjx⟩
-      · exact hout 0 0x3d59d273535ea62d897 (by decide) (by decide) j (by omega))
-    (fun j => by
-      by_cases hjx : j < 15
-      · exact long_chunk_1 ⟨j, hjx⟩
-      · exact hout 1 0x7a9becb6361c6c51507 (by decide) (by decide) j (by omega))
-    (fun j => by
-      by_cases hjx : j < 15
-      · exact long_chunk_2 ⟨j, hjx⟩
-      · exact hout 2 0x543f9b7e6c38d8a2a0e (by decide) (by decide) j (by omega))
-    (fun j => by
-      by_cases hjx : j < 15
-      · exact long_chunk_3 ⟨j, hjx⟩
-      · exact hout 3 0x0c577eaeccf1990d13c (by decide) (by decide) j (by omega))
-    (fun j => by
-      by_cases hjx : j < 15
-      · exact long_chunk_4 ⟨j, hjx⟩
-      · exact hout 4 0x1887f74f8dc71b10651 (by decide) (by decide) j (by omega))
+    (chunk_all 15 0 0x3d59d273535ea62d897 longLow rfl (by decide) long_chunk_0)
+    (chunk_all 15 1 0x7a9becb6361c6c51507 longLow rfl (by decide) long_chunk_1)
+    (chunk_all 15 2 0x543f9b7e6c38d8a2a0e longLow rfl (by decide) long_chunk_2)
+    (chunk_all 15 3 0x0c577eaeccf1990d13c longLow rfl (by decide) long_chunk_3)
+    (chunk_all 15 4 0x1887f74f8dc71b10651 longLow rfl (by decide) long_chunk_4)
     r v (by rw [hmask] at *; exact hr) j.val hj
   rw [hmask, hgens]
   have hget : longLow.getD j.val 0 = longLow[j.val] := by
@@ -540,103 +443,76 @@ theorem long_step_chunk (r : Nat) (v : Symbol) (hr : r < 2 ^ 75) (j : Fin 15) :
   rw [hget] at h
   exact h
 
-/-- The step map stays within its register. -/
-theorem regular_step_bound (r : Nat) (v : Symbol) :
-    Checksum.step 60 0x0fffffffffffffff Checksum.regularGenerators r v < 2 ^ 65 := by
-  have hnext : (((r &&& 0x0fffffffffffffff) <<< 5) ^^^ v.val) < 2 ^ 65 := by
-    have h1 : (r &&& 0x0fffffffffffffff) <<< 5 < 2 ^ 65 := by
-      rw [Nat.shiftLeft_eq]
-      have hlt : r &&& 0x0fffffffffffffff < 2 ^ 60 := by
-        calc r &&& 0x0fffffffffffffff ≤ 0x0fffffffffffffff := Nat.and_le_right
-          _ < 2 ^ 60 := by decide
-      have hmul : (r &&& 0x0fffffffffffffff) * 2 ^ 5 < 2 ^ 60 * 2 ^ 5 :=
-        Nat.mul_lt_mul_of_pos_right hlt (by decide : 0 < 2 ^ 5)
-      have h2 : 2 ^ 60 * 2 ^ 5 = 2 ^ 65 := by decide
-      rw [h2] at hmul
-      exact hmul
-    exact Nat.xor_lt_two_pow h1 (by have := v.isLt; omega)
-  have hg : ∀ g ∈ Checksum.regularGenerators, g < 2 ^ 65 := by decide
-  have hfold : ∀ (l : List (Nat × Nat)) (init : Nat), init < 2 ^ 65 →
-      (∀ p ∈ l, p.1 < 2 ^ 65) →
-      (l.foldl (fun acc p => if ((r >>> 60 >>> p.2) &&& 1 == 1) = true then acc ^^^ p.1 else acc) init) < 2 ^ 65 := by
+/-- A masked shift and bounded generator XORs preserve the register width. -/
+private theorem step_bound (shift mask : Nat) (gens : List Nat)
+    (hmask : mask < 2 ^ shift) (hgens : ∀ g ∈ gens, g < 2 ^ (shift + 5))
+    (r : Nat) (v : Symbol) :
+    Checksum.step shift mask gens r v < 2 ^ (shift + 5) := by
+  have hshift : (r &&& mask) <<< 5 < 2 ^ (shift + 5) := by
+    rw [Nat.shiftLeft_eq, Nat.pow_add]
+    exact Nat.mul_lt_mul_of_pos_right (Nat.lt_of_le_of_lt Nat.and_le_right hmask)
+      (by decide : 0 < 2 ^ 5)
+  have hv : v.val < 2 ^ (shift + 5) :=
+    Nat.lt_of_lt_of_le (show v.val < 2 ^ 5 from v.isLt) (Nat.pow_le_pow_right (by decide) (by omega))
+  have hfold : ∀ (l : List (Nat × Nat)) (init : Nat), init < 2 ^ (shift + 5) →
+      (∀ p ∈ l, p.1 < 2 ^ (shift + 5)) →
+      l.foldl (fun acc p => if ((r >>> shift >>> p.2) &&& 1 == 1) then acc ^^^ p.1 else acc)
+        init < 2 ^ (shift + 5) := by
     intro l
     induction l with
     | nil => intro init hi _; exact hi
     | cons p ps ih =>
       intro init hi hmem
       rw [List.foldl_cons]
-      show (List.foldl (fun acc p => if ((r >>> 60 >>> p.2) &&& 1 == 1) = true then acc ^^^ p.1 else acc)
-          (if ((r >>> 60 >>> p.2) &&& 1 == 1) = true then init ^^^ p.1 else init) ps) < 2 ^ 65
-      split
-      · rename_i hc
-        apply ih
+      apply ih
+      · split
         · exact Nat.xor_lt_two_pow hi (hmem p (by simp))
-        · intro q hq
-          exact hmem q (by simp [hq])
-      · rename_i hc
-        apply ih
         · exact hi
-        · intro q hq
-          exact hmem q (by simp [hq])
+      · intro q hq
+        exact hmem q (by simp [hq])
   unfold Checksum.step
-  show (Checksum.regularGenerators.zipIdx.foldl (fun acc p =>
-      if ((r >>> 60 >>> p.2) &&& 1 == 1) = true then acc ^^^ p.1 else acc)
-      (((r &&& 0x0fffffffffffffff) <<< 5) ^^^ v.val)) < 2 ^ 65
-  apply hfold _ _ hnext
+  apply hfold _ _ (Nat.xor_lt_two_pow hshift hv)
   intro p hp
-  have h2 := List.mem_zipIdx hp
-  obtain ⟨_, _, heq⟩ := h2
+  obtain ⟨_, _, heq⟩ := List.mem_zipIdx hp
   rw [heq]
-  exact hg _ (List.getElem_mem _)
+  exact hgens _ (List.getElem_mem _)
+
+/-- The step map stays within its register. -/
+theorem regular_step_bound (r : Nat) (v : Symbol) :
+    Checksum.step 60 0x0fffffffffffffff Checksum.regularGenerators r v < 2 ^ 65 :=
+  step_bound 60 _ _ (by decide) (by decide) r v
 
 /-- The long step map stays within its register. -/
 theorem long_step_bound (r : Nat) (v : Symbol) :
-    Checksum.step 70 0x3fffffffffffffffff Checksum.longGenerators r v < 2 ^ 75 := by
-  have hnext : (((r &&& 0x3fffffffffffffffff) <<< 5) ^^^ v.val) < 2 ^ 75 := by
-    have h1 : (r &&& 0x3fffffffffffffffff) <<< 5 < 2 ^ 75 := by
-      rw [Nat.shiftLeft_eq]
-      have hlt : r &&& 0x3fffffffffffffffff < 2 ^ 70 := by
-        calc r &&& 0x3fffffffffffffffff ≤ 0x3fffffffffffffffff := Nat.and_le_right
-          _ < 2 ^ 70 := by decide
-      have hmul : (r &&& 0x3fffffffffffffffff) * 2 ^ 5 < 2 ^ 70 * 2 ^ 5 :=
-        Nat.mul_lt_mul_of_pos_right hlt (by decide : 0 < 2 ^ 5)
-      have h2 : 2 ^ 70 * 2 ^ 5 = 2 ^ 75 := by decide
-      rw [h2] at hmul
-      exact hmul
-    exact Nat.xor_lt_two_pow h1 (by have := v.isLt; omega)
-  have hg : ∀ g ∈ Checksum.longGenerators, g < 2 ^ 75 := by decide
-  have hfold : ∀ (l : List (Nat × Nat)) (init : Nat), init < 2 ^ 75 →
-      (∀ p ∈ l, p.1 < 2 ^ 75) →
-      (l.foldl (fun acc p => if ((r >>> 70 >>> p.2) &&& 1 == 1) = true then acc ^^^ p.1 else acc) init) < 2 ^ 75 := by
-    intro l
-    induction l with
-    | nil => intro init hi _; exact hi
-    | cons p ps ih =>
-      intro init hi hmem
-      rw [List.foldl_cons]
-      show (List.foldl (fun acc p => if ((r >>> 70 >>> p.2) &&& 1 == 1) = true then acc ^^^ p.1 else acc)
-          (if ((r >>> 70 >>> p.2) &&& 1 == 1) = true then init ^^^ p.1 else init) ps) < 2 ^ 75
-      split
-      · rename_i hc
-        apply ih
-        · exact Nat.xor_lt_two_pow hi (hmem p (by simp))
-        · intro q hq
-          exact hmem q (by simp [hq])
-      · rename_i hc
-        apply ih
-        · exact hi
-        · intro q hq
-          exact hmem q (by simp [hq])
-  unfold Checksum.step
-  show (Checksum.longGenerators.zipIdx.foldl (fun acc p =>
-      if ((r >>> 70 >>> p.2) &&& 1 == 1) = true then acc ^^^ p.1 else acc)
-      (((r &&& 0x3fffffffffffffffff) <<< 5) ^^^ v.val)) < 2 ^ 75
-  apply hfold _ _ hnext
-  intro p hp
-  have h2 := List.mem_zipIdx hp
-  obtain ⟨_, _, heq⟩ := h2
-  rw [heq]
-  exact hg _ (List.getElem_mem _)
+    Checksum.step 70 0x3fffffffffffffffff Checksum.longGenerators r v < 2 ^ 75 :=
+  step_bound 70 _ _ (by decide) (by decide) r v
+
+/-- Assemble a register update from its chunk identities. -/
+private theorem step_unpack (n shift next r : Nat) (v : Symbol) (low : List Symbol)
+    (hlen : low.length = n + 1)
+    (hchunk : ∀ j : Fin (n + 1),
+      Symbol.ofNat ((next >>> (5 * j.val)) &&& 31) =
+        Field.add (if j.val = 0 then v else Symbol.ofNat ((r >>> (5 * (j.val - 1))) &&& 31))
+          (Field.mul (Symbol.ofNat (r >>> shift)) (low.getD j.val 0))) :
+    unpack (n + 1) next = List.zipWith Field.add (v :: (unpack (n + 1) r).take n)
+      (low.map (Field.mul (Symbol.ofNat (r >>> shift)))) := by
+  apply List.ext_getElem
+  · simp [unpack, hlen]
+  · intro j h1 h2
+    have hj : j < n + 1 := by simpa [unpack] using h1
+    have hc := hchunk ⟨j, hj⟩
+    have hget : low.getD j 0 = low[j]'(by omega) := by
+      simp [List.getD, List.getElem?_eq_getElem (by omega : j < low.length)]
+    rw [hget] at hc
+    cases j with
+    | zero =>
+      simp only [unpack, List.getElem_map, List.getElem_range, List.getElem_zipWith,
+        List.getElem_cons_zero]
+      simpa using hc
+    | succ j =>
+      simp only [unpack, List.getElem_map, List.getElem_range, List.getElem_zipWith,
+        List.getElem_cons_succ, List.getElem_take]
+      simpa using hc
 
 /-- The list form of one regular step: the register after the step is the
 shifted register XOR the top symbol times the low generator polynomial. -/
@@ -644,143 +520,86 @@ theorem regular_step_unpack (r : Nat) (v : Symbol) (hr : r < 2 ^ 65) :
     unpack 13 (Checksum.step 60 0x0fffffffffffffff Checksum.regularGenerators r v) =
       List.zipWith Field.add (v :: (unpack 13 r).take 12)
         (regularLow.map (Field.mul (Symbol.ofNat (r >>> 60)))) := by
-  apply List.ext_getElem
-  · simp only [unpack, List.length_map, List.length_range, List.length_zipWith,
-      List.length_cons, List.length_take, List.length_map, regularLow]
-    omega
-  · intro j h1 h2
-    have hj : j < 13 := by simpa [unpack] using h1
-    cases j with
-    | zero =>
-      have hc := regular_step_chunk r v hr ⟨0, by decide⟩
-      simp only [unpack, List.getElem_map, List.getElem_range, List.getElem_zipWith,
-        List.getElem_cons_zero, List.getElem_map]
-      rw [hc]
-      simp
-    | succ j =>
-      have hc := regular_step_chunk r v hr ⟨j + 1, by omega⟩
-      simp only [unpack, List.getElem_map, List.getElem_range, List.getElem_zipWith,
-        List.getElem_cons_succ, List.getElem_take, List.getElem_map]
-      rw [hc]
-      simp
+  apply step_unpack 12 60 _ r v regularLow rfl
+  intro j
+  have hget : regularLow.getD j.val 0 = regularLow[j.val] := by
+    simp only [List.getD, List.getElem?_eq_getElem (l := regularLow) j.isLt, Option.getD_some]
+    rfl
+  rw [hget]
+  exact regular_step_chunk r v hr j
 
 /-- The list form of one long step. -/
 theorem long_step_unpack (r : Nat) (v : Symbol) (hr : r < 2 ^ 75) :
     unpack 15 (Checksum.step 70 0x3fffffffffffffffff Checksum.longGenerators r v) =
       List.zipWith Field.add (v :: (unpack 15 r).take 14)
         (longLow.map (Field.mul (Symbol.ofNat (r >>> 70)))) := by
-  apply List.ext_getElem
-  · simp only [unpack, List.length_map, List.length_range, List.length_zipWith,
-      List.length_cons, List.length_take, List.length_map, longLow]
-    omega
-  · intro j h1 h2
-    have hj : j < 15 := by simpa [unpack] using h1
-    cases j with
-    | zero =>
-      have hc := long_step_chunk r v hr ⟨0, by decide⟩
-      simp only [unpack, List.getElem_map, List.getElem_range, List.getElem_zipWith,
-        List.getElem_cons_zero, List.getElem_map]
-      rw [hc]
-      simp
-    | succ j =>
-      have hc := long_step_chunk r v hr ⟨j + 1, by omega⟩
-      simp only [unpack, List.getElem_map, List.getElem_range, List.getElem_zipWith,
-        List.getElem_cons_succ, List.getElem_take, List.getElem_map]
-      rw [hc]
-      simp
+  apply step_unpack 14 70 _ r v longLow rfl
+  intro j
+  have hget : longLow.getD j.val 0 = longLow[j.val] := by
+    simp only [List.getD, List.getElem?_eq_getElem (l := longLow) j.isLt, Option.getD_some]
+    rfl
+  rw [hget]
+  exact long_step_chunk r v hr j
+
+/-- Evaluate a register update using its shifted-register decomposition and a
+monic generator. The final chunk supplies the generator's leading term. -/
+private theorem step_eval (n next r : Nat) (v : Symbol) (low : List Symbol)
+    (hlen : low.length = n + 1) (hr : r < 2 ^ (5 * n + 5))
+    (hstep : unpack (n + 1) next =
+      List.zipWith Field.add (v :: (unpack (n + 1) r).take n)
+        (low.map (Field.mul (Symbol.ofNat (r >>> (5 * n)))))) (x : GF1024) :
+    evalF x (unpack (n + 1) next) =
+      add (add (mul x (evalF x (unpack (n + 1) r))) (embed v))
+        (mul (embed (Symbol.ofNat (r >>> (5 * n)))) (evalF x (low ++ [1]))) := by
+  have hzip : (v :: (unpack (n + 1) r).take n).length =
+      (low.map (Field.mul (Symbol.ofNat (r >>> (5 * n))))).length := by
+    simp [unpack, hlen]
+  have heval : evalF x (unpack (n + 1) r) =
+      add (evalF x ((unpack (n + 1) r).take n))
+        (mul (pow x n) (embed (Symbol.ofNat (r >>> (5 * n))))) := by
+    have hreg : (unpack (n + 1) r).length = n + 1 := by simp [unpack]
+    have hdrop : evalF x ((unpack (n + 1) r).drop n) =
+        embed (Symbol.ofNat (r >>> (5 * n))) := by
+      rw [← List.getElem_cons_drop, List.drop_eq_nil_of_le (by omega : (unpack (n + 1) r).length ≤ n + 1)]
+      simp only [unpack, List.getElem_map, List.getElem_range,
+        evalF_cons, evalF_nil, mul_zero, add_zero]
+      rw [show (31 : Nat) = 2 ^ 5 - 1 by decide, Nat.and_two_pow_sub_one_eq_mod,
+        Nat.mod_eq_of_lt (top_lt_g (5 * n) r hr)]
+      omega
+    have hsplit := congrArg (evalF x) (List.take_append_drop n (unpack (n + 1) r)).symm
+    rw [evalF_append] at hsplit
+    rw [hsplit, hdrop]
+    simp [unpack, List.length_take]
+  have htake : mul x (evalF x ((unpack (n + 1) r).take n)) =
+      add (mul x (evalF x (unpack (n + 1) r)))
+        (mul (embed (Symbol.ofNat (r >>> (5 * n)))) (pow x (n + 1))) := by
+    rw [heval, mul_add]
+    rw [show mul x (mul (pow x n) (embed (Symbol.ofNat (r >>> (5 * n))))) =
+        mul (embed (Symbol.ofNat (r >>> (5 * n)))) (pow x (n + 1)) from by
+      rw [← mul_assoc, mul_comm x (pow x n), ← pow_succ,
+        mul_comm (pow x (n + 1)) (embed (Symbol.ofNat (r >>> (5 * n))))]]
+    rw [add_assoc, add_self, add_zero]
+  have hgen : evalF x (low ++ [1]) = add (evalF x low) (pow x (n + 1)) := by
+    rw [evalF_append, hlen]
+    simp only [evalF_cons, evalF_nil, mul_zero, add_zero, embed_one, mul_one]
+  rw [hstep, evalF_zipAdd x _ _ hzip, evalF_cons, evalF_map_scalar, htake, hgen, mul_add]
+  ac_rfl
 
 /-- After evaluation at any `x : GF1024`, the register after one regular step
 equals `x·R + v + top·g`. -/
 theorem regular_step_eval (r : Nat) (v : Symbol) (hr : r < 2 ^ 65) (x : GF1024) :
     evalF x (unpack 13 (Checksum.step 60 0x0fffffffffffffff Checksum.regularGenerators r v)) =
       add (add (mul x (evalF x (unpack 13 r))) (embed v))
-        (mul (embed (Symbol.ofNat (r >>> 60))) (evalF x GF1024.regularGenerator)) := by
-  have hlen : (v :: (unpack 13 r).take 12).length =
-      (regularLow.map (Field.mul (Symbol.ofNat (r >>> 60)))).length := by
-    simp [unpack, regularLow]
-  have heval : evalF x (unpack 13 r) =
-      add (evalF x ((unpack 13 r).take 12))
-        (mul (pow x 12) (embed (Symbol.ofNat (r >>> 60)))) := by
-    have hlen13 : (unpack 13 r).length = 13 := by simp [unpack]
-    have hdrop : evalF x ((unpack 13 r).drop 12) = embed (Symbol.ofNat (r >>> 60)) := by
-      rw [← List.getElem_cons_drop, List.drop_eq_nil_of_le (by omega : 13 ≤ 13)]
-      simp only [unpack, List.getElem_map, List.getElem_range, Nat.reduceMul,
-        evalF_cons, evalF_nil, mul_zero, add_zero]
-      have hlt : r >>> 60 < 32 := top_lt_g 60 r hr
-      rw [show (31 : Nat) = 2 ^ 5 - 1 by decide, Nat.and_two_pow_sub_one_eq_mod,
-        Nat.mod_eq_of_lt hlt]
-      rw [hlen13]
-      decide
-    have hsplit := congrArg (evalF x) (List.take_append_drop 12 (unpack 13 r)).symm
-    rw [evalF_append] at hsplit
-    rw [hsplit, hdrop]
-    have hlen : (List.take 12 (unpack 13 r)).length = 12 := by simp [unpack, List.length_take]
-    rw [hlen]
-  have htake2 : mul x (evalF x ((unpack 13 r).take 12)) =
-      add (mul x (evalF x (unpack 13 r)))
-        (mul (embed (Symbol.ofNat (r >>> 60))) (pow x 13)) := by
-    rw [heval, mul_add]
-    rw [show mul x (mul (pow x 12) (embed (Symbol.ofNat (r >>> 60)))) =
-        mul (embed (Symbol.ofNat (r >>> 60))) (pow x 13) from by
-      rw [← mul_assoc, mul_comm x (pow x 12), ← pow_succ,
-        mul_comm (pow x 13) (embed (Symbol.ofNat (r >>> 60)))]]
-    rw [add_assoc, add_self, add_zero]
-  have hg13 : evalF x GF1024.regularGenerator = add (evalF x regularLow) (pow x 13) := by
-    rw [regularGenerator_eq, evalF_append, show regularLow.length = 13 from by decide]
-    simp only [evalF_cons, evalF_nil, mul_zero, add_zero, embed_one, mul_one]
-  rw [regular_step_unpack r v hr, evalF_zipAdd x _ _ hlen, evalF_cons, evalF_map_scalar,
-    htake2, hg13, mul_add]
-  ac_rfl
+        (mul (embed (Symbol.ofNat (r >>> 60))) (evalF x GF1024.regularGenerator)) :=
+  step_eval 12 _ r v regularLow rfl hr (regular_step_unpack r v hr) x
 
 /-- After evaluation at any `x : GF1024`, the register after one long step
 equals `x·R + v + top·g`. -/
 theorem long_step_eval (r : Nat) (v : Symbol) (hr : r < 2 ^ 75) (x : GF1024) :
     evalF x (unpack 15 (Checksum.step 70 0x3fffffffffffffffff Checksum.longGenerators r v)) =
       add (add (mul x (evalF x (unpack 15 r))) (embed v))
-        (mul (embed (Symbol.ofNat (r >>> 70))) (evalF x GF1024.longGenerator)) := by
-  have hlen : (v :: (unpack 15 r).take 14).length =
-      (longLow.map (Field.mul (Symbol.ofNat (r >>> 70)))).length := by
-    simp [unpack, longLow]
-  have heval : evalF x (unpack 15 r) =
-      add (evalF x ((unpack 15 r).take 14))
-        (mul (pow x 14) (embed (Symbol.ofNat (r >>> 70)))) := by
-    have hlen15 : (unpack 15 r).length = 15 := by simp [unpack]
-    have hdrop : evalF x ((unpack 15 r).drop 14) = embed (Symbol.ofNat (r >>> 70)) := by
-      rw [← List.getElem_cons_drop, List.drop_eq_nil_of_le (by omega : 15 ≤ 15)]
-      simp only [unpack, List.getElem_map, List.getElem_range, Nat.reduceMul,
-        evalF_cons, evalF_nil, mul_zero, add_zero]
-      have hlt : r >>> 70 < 32 := top_lt_g 70 r hr
-      rw [show (31 : Nat) = 2 ^ 5 - 1 by decide, Nat.and_two_pow_sub_one_eq_mod,
-        Nat.mod_eq_of_lt hlt]
-      rw [hlen15]
-      decide
-    have hsplit := congrArg (evalF x) (List.take_append_drop 14 (unpack 15 r)).symm
-    rw [evalF_append] at hsplit
-    rw [hsplit, hdrop]
-    have hlen : (List.take 14 (unpack 15 r)).length = 14 := by simp [unpack, List.length_take]
-    rw [hlen]
-  have htake2 : mul x (evalF x ((unpack 15 r).take 14)) =
-      add (mul x (evalF x (unpack 15 r)))
-        (mul (embed (Symbol.ofNat (r >>> 70))) (pow x 15)) := by
-    rw [heval, mul_add]
-    rw [show mul x (mul (pow x 14) (embed (Symbol.ofNat (r >>> 70)))) =
-        mul (embed (Symbol.ofNat (r >>> 70))) (pow x 15) from by
-      rw [← mul_assoc, mul_comm x (pow x 14), ← pow_succ,
-        mul_comm (pow x 15) (embed (Symbol.ofNat (r >>> 70)))]]
-    rw [add_assoc, add_self, add_zero]
-  have hg15 : evalF x GF1024.longGenerator = add (evalF x longLow) (pow x 15) := by
-    rw [longGenerator_eq, evalF_append, show longLow.length = 15 from by decide]
-    simp only [evalF_cons, evalF_nil, mul_zero, add_zero, embed_one, mul_one]
-  rw [long_step_unpack r v hr, evalF_zipAdd x _ _ hlen, evalF_cons, evalF_map_scalar,
-    htake2, hg15, mul_add]
-  ac_rfl
-
-/-- A bound on the shifted-out top of the long register. -/
-private theorem long_top_lt (r : Nat) (hr : r < 2 ^ 75) : r >>> 70 < 32 := by
-  rw [Nat.shiftRight_eq_div_pow]
-  have h : 2 ^ 75 = 2 ^ 70 * 32 := by decide
-  rw [h] at hr
-  exact Nat.div_lt_of_lt_mul hr
+        (mul (embed (Symbol.ofNat (r >>> 70))) (evalF x GF1024.longGenerator)) :=
+  step_eval 14 _ r v longLow rfl hr (long_step_unpack r v hr) x
 
 end GF1024
 
@@ -791,95 +610,117 @@ namespace Codex32
 namespace GF1024
 
 /-- The folded multiple-of-`g` contribution accumulated by the telescoped
-recurrence. -/
-private def qsFold (x : GF1024) (qs : List (Symbol × Nat)) : GF1024 :=
-  qs.foldl (fun s p => add s (mul (embed p.1) (mul (pow x p.2) (evalF x regularGenerator)))) zero
+recurrence, for either checksum generator. -/
+private def qsFold_g (generator : List Symbol) (x : GF1024)
+    (qs : List (Symbol × Nat)) : GF1024 :=
+  qs.foldl (fun s p => add s (mul (embed p.1) (mul (pow x p.2) (evalF x generator)))) zero
 
-private theorem qsFold_cons (x : GF1024) (p : Symbol × Nat) (qs : List (Symbol × Nat)) :
-    qsFold x (p :: qs) =
-      add (mul (embed p.1) (mul (pow x p.2) (evalF x regularGenerator))) (qsFold x qs) := by
-  show qsFold x (p :: qs) = _
-  rw [qsFold, List.foldl_cons, zero_add]
+private theorem qsFold_g_cons (generator : List Symbol) (x : GF1024)
+    (p : Symbol × Nat) (qs : List (Symbol × Nat)) :
+    qsFold_g generator x (p :: qs) =
+      add (mul (embed p.1) (mul (pow x p.2) (evalF x generator)))
+        (qsFold_g generator x qs) := by
+  rw [qsFold_g, List.foldl_cons, zero_add]
   exact foldl_add_start _ _ _
 
-private theorem mul_foldl_add (u : GF1024) (l : List α) (g : α → GF1024) :
-    ∀ init : GF1024, mul u (l.foldl (fun s p => add s (g p)) init) =
-      l.foldl (fun s p => add s (mul u (g p))) (mul u init) := by
-  induction l with
-  | nil => intro init; rfl
-  | cons p ps ih =>
-    intro init
-    simp only [List.foldl_cons]
-    rw [ih (add init (g p)), mul_add]
-
-private theorem qsFold_shift (x : GF1024) (qs : List (Symbol × Nat)) :
-    qsFold x (qs.map (fun p => (p.1, p.2 + 1))) = mul x (qsFold x qs) := by
+private theorem qsFold_g_shift (generator : List Symbol) (x : GF1024)
+    (qs : List (Symbol × Nat)) :
+    qsFold_g generator x (qs.map (fun p => (p.1, p.2 + 1))) =
+      mul x (qsFold_g generator x qs) := by
   induction qs with
-  | nil => simp [qsFold]
+  | nil => simp [qsFold_g]
   | cons p ps ih =>
-    rw [List.map_cons, qsFold_cons, qsFold_cons, ih]
-    show add (mul (embed (p.1, p.2 + 1).1) (mul (pow x (p.1, p.2 + 1).2) (evalF x regularGenerator)))
-        (mul x (qsFold x ps)) =
-        mul x (add (mul (embed p.1) (mul (pow x p.2) (evalF x regularGenerator))) (qsFold x ps))
-    rw [mul_add,
-      show mul (embed (p.1, p.2 + 1).1) (mul (pow x (p.1, p.2 + 1).2) (evalF x regularGenerator)) =
-        mul x (mul (embed p.1) (mul (pow x p.2) (evalF x regularGenerator))) from by
-      rw [pow_succ, mul_assoc (pow x p.2) x (evalF x regularGenerator),
-        mul_left_comm (pow x p.2) x (evalF x regularGenerator),
-        mul_left_comm x (embed p.1) (mul (pow x p.2) (evalF x regularGenerator))]]
+    rw [List.map_cons, qsFold_g_cons, qsFold_g_cons, ih]
+    rw [mul_add]
+    congr 1
+    rw [pow_succ, mul_assoc (pow x p.2) x (evalF x generator),
+      mul_left_comm (pow x p.2) x (evalF x generator),
+      mul_left_comm x (embed p.1) (mul (pow x p.2) (evalF x generator))]
 
-private theorem qsFold_zero (x : GF1024) (qs : List (Symbol × Nat))
-    (h : evalF x regularGenerator = zero) : qsFold x qs = zero := by
+private theorem qsFold_g_zero (generator : List Symbol) (x : GF1024)
+    (qs : List (Symbol × Nat)) (h : evalF x generator = zero) :
+    qsFold_g generator x qs = zero := by
   induction qs with
   | nil => rfl
   | cons p qs ih =>
-    rw [qsFold_cons, h, mul_zero, mul_zero, zero_add]
+    rw [qsFold_g_cons, h, mul_zero, mul_zero, zero_add]
     exact ih
-/-- The telescoped recurrence for the regular checksum: after `n` symbols,
-the register evaluates to `xⁿ·init + M + g·Q` at every `x : GF1024`, with the
-multiple-of-`g` contribution collected in `qsFold`. -/
-theorem telescope (vs : List Symbol) :
+
+private def qsFold := qsFold_g regularGenerator
+
+private def qsFoldLong := qsFold_g longGenerator
+
+private theorem qsFold_zero (x : GF1024) (qs : List (Symbol × Nat))
+    (h : evalF x regularGenerator = zero) : qsFold x qs = zero :=
+  qsFold_g_zero regularGenerator x qs h
+
+private theorem qsFoldLong_zero (x : GF1024) (qs : List (Symbol × Nat))
+    (h : evalF x longGenerator = zero) : qsFoldLong x qs = zero :=
+  qsFold_g_zero longGenerator x qs h
+
+/-- Any bounded register recurrence with the one-step polynomial identity
+has the same telescoped form. Width counts five-bit symbols; shift locates
+the outgoing coefficient. -/
+private theorem telescope_g (width shift : Nat) (step : Nat → Symbol → Nat)
+    (generator : List Symbol) (initial : Nat)
+    (initial_bound : initial < 2 ^ (5 * width))
+    (step_bound : ∀ r v, step r v < 2 ^ (5 * width))
+    (step_eval : ∀ r v, r < 2 ^ (5 * width) → ∀ x : GF1024,
+      evalF x (unpack width (step r v)) =
+        add (add (mul x (evalF x (unpack width r))) (embed v))
+          (mul (embed (Symbol.ofNat (r >>> shift))) (evalF x generator)))
+    (vs : List Symbol) :
     ∃ qs : List (Symbol × Nat), ∀ x : GF1024,
-      evalF x (unpack 13 (vs.reverse.foldl (Checksum.step 60 0x0fffffffffffffff Checksum.regularGenerators) initResidue)) =
-        add (mul (pow x vs.length) (evalF x (unpack 13 initResidue)))
-          (add (evalF x vs.reverse.reverse) (qsFold x qs)) := by
+      evalF x (unpack width (vs.reverse.foldl step initial)) =
+        add (mul (pow x vs.length) (evalF x (unpack width initial)))
+          (add (evalF x vs.reverse.reverse) (qsFold_g generator x qs)) := by
   have hbound : ∀ l : List Symbol,
-      l.reverse.foldl (Checksum.step 60 0x0fffffffffffffff Checksum.regularGenerators) initResidue <
-        2 ^ 65 := by
+      l.reverse.foldl step initial < 2 ^ (5 * width) := by
     intro l
     induction l with
-    | nil => decide
+    | nil => exact initial_bound
     | cons v vs ih =>
       rw [List.reverse_cons, List.foldl_append, List.foldl_cons, List.foldl_nil]
-      exact regular_step_bound _ _
+      exact step_bound _ _
   induction vs with
   | nil =>
     refine ⟨[], fun x => ?_⟩
-    show evalF x (unpack 13 initResidue) = _
+    show evalF x (unpack width initial) = _
     simp only [List.reverse_nil, List.length_nil, pow_zero]
-    rw [one_mul, evalF_nil, zero_add, show qsFold x [] = zero from rfl, add_zero]
+    rw [one_mul, evalF_nil, zero_add,
+      show qsFold_g generator x [] = zero from rfl, add_zero]
   | cons v vs ih =>
     obtain ⟨qs, hq⟩ := ih
-    refine ⟨(Symbol.ofNat ((vs.reverse.foldl (Checksum.step 60 0x0fffffffffffffff
-        Checksum.regularGenerators) initResidue) >>> 60), 0) :: qs.map (fun p => (p.1, p.2 + 1)),
-      fun x => ?_⟩
+    refine ⟨(Symbol.ofNat ((vs.reverse.foldl step initial) >>> shift), 0) ::
+      qs.map (fun p => (p.1, p.2 + 1)), fun x => ?_⟩
     rw [List.reverse_cons, List.foldl_append, List.foldl_cons, List.foldl_nil]
-    rw [regular_step_eval _ _ (hbound _) x, hq]
-    rw [qsFold_cons, qsFold_shift, pow_zero, one_mul]
-    have hexpand : mul x (add (mul (pow x vs.length) (evalF x (unpack 13 initResidue)))
-        (add (evalF x vs.reverse.reverse) (qsFold x qs))) =
-        add (mul (pow x (vs.length + 1)) (evalF x (unpack 13 initResidue)))
-          (add (mul x (evalF x vs.reverse.reverse)) (mul x (qsFold x qs))) := by
+    rw [step_eval _ _ (hbound _) x, hq]
+    rw [qsFold_g_cons, qsFold_g_shift, pow_zero, one_mul]
+    have hexpand : mul x (add (mul (pow x vs.length) (evalF x (unpack width initial)))
+        (add (evalF x vs.reverse.reverse) (qsFold_g generator x qs))) =
+        add (mul (pow x (vs.length + 1)) (evalF x (unpack width initial)))
+          (add (mul x (evalF x vs.reverse.reverse)) (mul x (qsFold_g generator x qs))) := by
       rw [mul_add, mul_add, ← mul_assoc, mul_comm x (pow x vs.length), ← pow_succ]
     rw [hexpand, List.length_cons, List.reverse_append, List.reverse_singleton,
       List.reverse_reverse, show [v] ++ vs = v :: vs from rfl, evalF_cons]
     ac_rfl
 
+/-- The telescoped recurrence for the regular checksum: after `n` symbols,
+the register evaluates to `xⁿ·init + M + g·Q` at every `x : GF1024`, with the
+multiple-of-`g` contribution collected in `qsFold`. -/
+theorem telescope (vs : List Symbol) :
+    ∃ qs : List (Symbol × Nat), ∀ x : GF1024,
+      evalF x (unpack 13 (vs.reverse.foldl (Checksum.step 60 0x0fffffffffffffff Checksum.regularGenerators) Checksum.initResidue)) =
+        add (mul (pow x vs.length) (evalF x (unpack 13 Checksum.initResidue)))
+          (add (evalF x vs.reverse.reverse) (qsFold x qs)) :=
+  telescope_g 13 60 (Checksum.step 60 0x0fffffffffffffff Checksum.regularGenerators)
+    regularGenerator Checksum.initResidue (by decide) regular_step_bound regular_step_eval vs
+
 /-- The final statement in forward order. -/
 theorem telescope_forward (vs : List Symbol) :
     ∃ qs : List (Symbol × Nat), ∀ x : GF1024,
-      evalF x (unpack 13 (vs.foldl (Checksum.step 60 0x0fffffffffffffff Checksum.regularGenerators) initResidue)) =
-        add (mul (pow x vs.length) (evalF x (unpack 13 initResidue)))
+      evalF x (unpack 13 (vs.foldl (Checksum.step 60 0x0fffffffffffffff Checksum.regularGenerators) Checksum.initResidue)) =
+        add (mul (pow x vs.length) (evalF x (unpack 13 Checksum.initResidue)))
           (add (evalF x vs.reverse) (qsFold x qs)) := by
   obtain ⟨qs, hq⟩ := telescope vs.reverse
   refine ⟨qs, fun x => ?_⟩
@@ -887,85 +728,22 @@ theorem telescope_forward (vs : List Symbol) :
   rw [hq]
   simp [List.length_reverse]
 
-private def qsFoldLong (x : GF1024) (qs : List (Symbol × Nat)) : GF1024 :=
-  qs.foldl (fun s p => add s (mul (embed p.1) (mul (pow x p.2) (evalF x longGenerator)))) zero
-
-private theorem qsFoldLong_cons (x : GF1024) (p : Symbol × Nat) (qs : List (Symbol × Nat)) :
-    qsFoldLong x (p :: qs) =
-      add (mul (embed p.1) (mul (pow x p.2) (evalF x longGenerator))) (qsFoldLong x qs) := by
-  show qsFoldLong x (p :: qs) = _
-  rw [qsFoldLong, List.foldl_cons, zero_add]
-  exact foldl_add_start _ _ _
-
-private theorem qsFoldLong_shift (x : GF1024) (qs : List (Symbol × Nat)) :
-    qsFoldLong x (qs.map (fun p => (p.1, p.2 + 1))) = mul x (qsFoldLong x qs) := by
-  induction qs with
-  | nil => simp [qsFoldLong]
-  | cons p ps ih =>
-    rw [List.map_cons, qsFoldLong_cons, qsFoldLong_cons, ih]
-    show add (mul (embed (p.1, p.2 + 1).1) (mul (pow x (p.1, p.2 + 1).2) (evalF x longGenerator)))
-        (mul x (qsFoldLong x ps)) =
-        mul x (add (mul (embed p.1) (mul (pow x p.2) (evalF x longGenerator))) (qsFoldLong x ps))
-    rw [mul_add,
-      show mul (embed (p.1, p.2 + 1).1) (mul (pow x (p.1, p.2 + 1).2) (evalF x longGenerator)) =
-        mul x (mul (embed p.1) (mul (pow x p.2) (evalF x longGenerator))) from by
-      rw [pow_succ, mul_assoc (pow x p.2) x (evalF x longGenerator),
-        mul_left_comm (pow x p.2) x (evalF x longGenerator),
-        mul_left_comm x (embed p.1) (mul (pow x p.2) (evalF x longGenerator))]]
-
-private theorem qsFoldLong_zero (x : GF1024) (qs : List (Symbol × Nat))
-    (h : evalF x longGenerator = zero) : qsFoldLong x qs = zero := by
-  induction qs with
-  | nil => rfl
-  | cons p qs ih =>
-    rw [qsFoldLong_cons, h, mul_zero, mul_zero, zero_add]
-    exact ih
-
 /-- The telescoped recurrence for the long checksum: after `n` symbols,
 the register evaluates to `xⁿ·init + M + g·Q` at every `x : GF1024`, with the
 multiple-of-`g` contribution collected in `qsFoldLong`. -/
 theorem telescope_long (vs : List Symbol) :
     ∃ qs : List (Symbol × Nat), ∀ x : GF1024,
-      evalF x (unpack 15 (vs.reverse.foldl (Checksum.step 70 0x3fffffffffffffffff Checksum.longGenerators) initResidue)) =
-        add (mul (pow x vs.length) (evalF x (unpack 15 initResidue)))
-          (add (evalF x vs.reverse.reverse) (qsFoldLong x qs)) := by
-  have hbound : ∀ l : List Symbol,
-      l.reverse.foldl (Checksum.step 70 0x3fffffffffffffffff Checksum.longGenerators) initResidue <
-        2 ^ 75 := by
-    intro l
-    induction l with
-    | nil => decide
-    | cons v vs ih =>
-      rw [List.reverse_cons, List.foldl_append, List.foldl_cons, List.foldl_nil]
-      exact long_step_bound _ _
-  induction vs with
-  | nil =>
-    refine ⟨[], fun x => ?_⟩
-    show evalF x (unpack 15 initResidue) = _
-    simp only [List.reverse_nil, List.length_nil, pow_zero]
-    rw [one_mul, evalF_nil, zero_add, show qsFoldLong x [] = zero from rfl, add_zero]
-  | cons v vs ih =>
-    obtain ⟨qs, hq⟩ := ih
-    refine ⟨(Symbol.ofNat ((vs.reverse.foldl (Checksum.step 70 0x3fffffffffffffffff
-        Checksum.longGenerators) initResidue) >>> 70), 0) :: qs.map (fun p => (p.1, p.2 + 1)),
-      fun x => ?_⟩
-    rw [List.reverse_cons, List.foldl_append, List.foldl_cons, List.foldl_nil]
-    rw [long_step_eval _ _ (hbound _) x, hq]
-    rw [qsFoldLong_cons, qsFoldLong_shift, pow_zero, one_mul]
-    have hexpand : mul x (add (mul (pow x vs.length) (evalF x (unpack 15 initResidue)))
-        (add (evalF x vs.reverse.reverse) (qsFoldLong x qs))) =
-        add (mul (pow x (vs.length + 1)) (evalF x (unpack 15 initResidue)))
-          (add (mul x (evalF x vs.reverse.reverse)) (mul x (qsFoldLong x qs))) := by
-      rw [mul_add, mul_add, ← mul_assoc, mul_comm x (pow x vs.length), ← pow_succ]
-    rw [hexpand, List.length_cons, List.reverse_append, List.reverse_singleton,
-      List.reverse_reverse, show [v] ++ vs = v :: vs from rfl, evalF_cons]
-    ac_rfl
+      evalF x (unpack 15 (vs.reverse.foldl (Checksum.step 70 0x3fffffffffffffffff Checksum.longGenerators) Checksum.initResidue)) =
+        add (mul (pow x vs.length) (evalF x (unpack 15 Checksum.initResidue)))
+          (add (evalF x vs.reverse.reverse) (qsFoldLong x qs)) :=
+  telescope_g 15 70 (Checksum.step 70 0x3fffffffffffffffff Checksum.longGenerators)
+    longGenerator Checksum.initResidue (by decide) long_step_bound long_step_eval vs
 
 /-- The long telescope in forward order. -/
 theorem telescope_long_forward (vs : List Symbol) :
     ∃ qs : List (Symbol × Nat), ∀ x : GF1024,
-      evalF x (unpack 15 (vs.foldl (Checksum.step 70 0x3fffffffffffffffff Checksum.longGenerators) initResidue)) =
-        add (mul (pow x vs.length) (evalF x (unpack 15 initResidue)))
+      evalF x (unpack 15 (vs.foldl (Checksum.step 70 0x3fffffffffffffffff Checksum.longGenerators) Checksum.initResidue)) =
+        add (mul (pow x vs.length) (evalF x (unpack 15 Checksum.initResidue)))
           (add (evalF x vs.reverse) (qsFoldLong x qs)) := by
   obtain ⟨qs, hq⟩ := telescope_long vs.reverse
   refine ⟨qs, fun x => ?_⟩
@@ -1009,13 +787,15 @@ private theorem zipWith_add_reverse (c1 c2 : List Symbol) (hlen : c1.length = c2
         List.zipWith_append hlenr, ih bs hlen', List.reverse_cons]
       rfl
 
-/-- The BCH error-detection theorem for the regular checksum. Equal-length
-valid regular strings that differ in at most eight symbols are identical. -/
-theorem regular_detection (c1 c2 : List Symbol) (hlen : c1.length = c2.length)
-    (hbound : 5 + c1.length ≤ 93) (hpoly : Checksum.regularPolymod c1 = Checksum.regularPolymod c2)
-    (hwt : ((c1.zip c2).filter (fun p => p.1 ≠ p.2)).length ≤ 8) : c1 = c2 := by
-  obtain ⟨qs, hq⟩ := telescope_forward c1
-  obtain ⟨qs2, hq2⟩ := telescope_forward c2
+/-- The BCH bound depends only on agreement at eight consecutive root powers. -/
+private theorem detection_of_evaluations (root : GF1024) (period start : Nat)
+    (hroot : root ≠ zero)
+    (hinj : ∀ a b, a < period → b < period → pow root a = pow root b → a = b)
+    (c1 c2 : List Symbol) (hlen : c1.length = c2.length)
+    (hbound : c1.length ≤ period)
+    (hwt : ((c1.zip c2).filter (fun p => p.1 ≠ p.2)).length ≤ 8)
+    (heval : ∀ i < 8, evalF (pow root (start + i)) c1.reverse =
+      evalF (pow root (start + i)) c2.reverse) : c1 = c2 := by
   have hDwt : ((List.zipWith Field.add c1.reverse c2.reverse).filter (· ≠ 0)).length ≤ 8 := by
     have h1 : (List.zipWith Field.add c1.reverse c2.reverse).filter (· ≠ 0) =
         (((c1.zip c2).filter (fun p => p.1 ≠ p.2)).map (fun p => Field.add p.1 p.2)).reverse := by
@@ -1030,33 +810,16 @@ theorem regular_detection (c1 c2 : List Symbol) (hlen : c1.length = c2.length)
       exact decide_eq_decide.mpr (not_congr (Field.add_eq_zero p.1 p.2))
     rw [h1, List.length_reverse, List.length_map]
     exact hwt
-  have hDlen : (List.zipWith Field.add c1.reverse c2.reverse).length ≤ 93 := by
+  have hDlen : (List.zipWith Field.add c1.reverse c2.reverse).length ≤ period := by
     simp [List.length_zipWith, List.length_reverse, hlen]
     omega
-  have hvan : ∀ i < 8, evalF (pow beta (77 + i))
+  have hvan : ∀ i < 8, evalF (pow root (start + i))
       (List.zipWith Field.add c1.reverse c2.reverse) = zero := by
     intro i hi
-    have hroot : 77 + i ∈ regularRoots :=
-      regular_consecutive_roots (77 + i) (by simp [List.mem_range', hi])
-    have hz := evalF_regularGenerator_zero (77 + i) hroot
-    have h1 := hq (pow beta (77 + i))
-    have h2 := hq2 (pow beta (77 + i))
-    rw [qsFold_zero (pow beta (77 + i)) qs hz, add_zero] at h1
-    rw [qsFold_zero (pow beta (77 + i)) qs2 hz, add_zero] at h2
-    have hpoly' : unpack 13 (Checksum.regularPolymod c1) = unpack 13 (Checksum.regularPolymod c2) :=
-      congrArg (unpack 13) hpoly
-    simp only [Checksum.regularPolymod] at hpoly'
-    unfold initResidue at h1 h2
-    have hpoly'' := congrArg (evalF (pow beta (77 + i))) hpoly'
-    rw [h1, h2, hlen] at hpoly''
-    have hce : evalF (pow beta (77 + i)) c1.reverse = evalF (pow beta (77 + i)) c2.reverse := by
-      have h4 := congrArg (add (mul (pow (pow beta (77 + i)) c2.length) (evalF (pow beta (77 + i)) (unpack 13 36798899)))) hpoly''
-      rw [add_cancel_left, add_cancel_left] at h4
-      exact h4
-    rw [evalF_zipAdd _ _ _ (by simp [List.length_reverse, hlen]), hce]
+    rw [evalF_zipAdd _ _ _ (by simp [List.length_reverse, hlen]), heval i hi]
     exact add_self _
-  have hzero := sparse_zero (List.zipWith Field.add c1.reverse c2.reverse) beta 93 77
-    beta_ne_zero (fun a b ha hb h => beta_inj_below ha hb h) hDwt hDlen hvan
+  have hzero := sparse_zero (List.zipWith Field.add c1.reverse c2.reverse) root period start
+    hroot hinj hDwt hDlen hvan
   have hrev : c1.reverse = c2.reverse := by
     apply List.ext_getElem (by simp [List.length_reverse, hlen])
     intro j h1' h2'
@@ -1066,62 +829,61 @@ theorem regular_detection (c1 c2 : List Symbol) (hlen : c1.length = c2.length)
     exact (Field.add_eq_zero _ _).mp hDj
   exact List.reverse_inj.mp hrev
 
+/-- The BCH error-detection theorem for the regular checksum. Equal-length
+valid regular strings that differ in at most eight symbols are identical. -/
+theorem regular_detection (c1 c2 : List Symbol) (hlen : c1.length = c2.length)
+    (hbound : 5 + c1.length ≤ 93) (hpoly : Checksum.regularPolymod c1 = Checksum.regularPolymod c2)
+    (hwt : ((c1.zip c2).filter (fun p => p.1 ≠ p.2)).length ≤ 8) : c1 = c2 := by
+  obtain ⟨qs, hq⟩ := telescope_forward c1
+  obtain ⟨qs2, hq2⟩ := telescope_forward c2
+  apply detection_of_evaluations beta 93 77 beta_ne_zero
+    (fun a b ha hb h => beta_inj_below ha hb h) c1 c2 hlen (by omega) hwt
+  intro i hi
+  have hroot : 77 + i ∈ regularRoots :=
+    regular_consecutive_roots (77 + i) (by simp [List.mem_range', hi])
+  have hz := evalF_regularGenerator_zero (77 + i) hroot
+  have h1 := hq (pow beta (77 + i))
+  have h2 := hq2 (pow beta (77 + i))
+  rw [qsFold_zero (pow beta (77 + i)) qs hz, add_zero] at h1
+  rw [qsFold_zero (pow beta (77 + i)) qs2 hz, add_zero] at h2
+  have hpoly' : unpack 13 (Checksum.regularPolymod c1) = unpack 13 (Checksum.regularPolymod c2) :=
+    congrArg (unpack 13) hpoly
+  simp only [Checksum.regularPolymod] at hpoly'
+  have hpoly'' := congrArg (evalF (pow beta (77 + i))) hpoly'
+  rw [h1, h2, hlen] at hpoly''
+  have hce : evalF (pow beta (77 + i)) c1.reverse = evalF (pow beta (77 + i)) c2.reverse := by
+    have h4 := congrArg (add (mul (pow (pow beta (77 + i)) c2.length) (evalF (pow beta (77 + i)) (unpack 13 Checksum.initResidue)))) hpoly''
+    rw [add_cancel_left, add_cancel_left] at h4
+    exact h4
+  exact hce
+
 /-- The BCH error-detection theorem for the long checksum. -/
 theorem long_detection (c1 c2 : List Symbol) (hlen : c1.length = c2.length)
     (hbound : 5 + c1.length ≤ 1023) (hpoly : Checksum.longPolymod c1 = Checksum.longPolymod c2)
     (hwt : ((c1.zip c2).filter (fun p => p.1 ≠ p.2)).length ≤ 8) : c1 = c2 := by
   obtain ⟨qs, hq⟩ := telescope_long_forward c1
   obtain ⟨qs2, hq2⟩ := telescope_long_forward c2
-  have hDwt : ((List.zipWith Field.add c1.reverse c2.reverse).filter (· ≠ 0)).length ≤ 8 := by
-    have h1 : (List.zipWith Field.add c1.reverse c2.reverse).filter (· ≠ 0) =
-        (((c1.zip c2).filter (fun p => p.1 ≠ p.2)).map (fun p => Field.add p.1 p.2)).reverse := by
-      rw [zipWith_add_reverse c1 c2 hlen, List.filter_reverse, zipWith_add_eq_map,
-        List.filter_map]
-      apply congrArg List.reverse
-      apply congrArg (List.map (fun (p : Symbol × Symbol) => Field.add p.1 p.2))
-      apply List.filter_congr
-      intro (p : Symbol × Symbol) hp
-      show ((fun x => decide (x ≠ 0)) ∘ fun p => Field.add p.1 p.2) p = decide (p.1 ≠ p.2)
-      show decide (Field.add p.1 p.2 ≠ 0) = decide (p.1 ≠ p.2)
-      exact decide_eq_decide.mpr (not_congr (Field.add_eq_zero p.1 p.2))
-    rw [h1, List.length_reverse, List.length_map]
-    exact hwt
-  have hDlen : (List.zipWith Field.add c1.reverse c2.reverse).length ≤ 1023 := by
-    simp [List.length_zipWith, List.length_reverse, hlen]
-    omega
-  have hvan : ∀ i < 8, evalF (pow gamma (1019 + i))
-      (List.zipWith Field.add c1.reverse c2.reverse) = zero := by
-    intro i hi
-    have hroot : 1019 + i ∈ longRoots :=
-      long_consecutive_roots (1019 + i) (by simp [List.mem_range', hi])
-    have hz := evalF_longGenerator_zero (1019 + i) hroot
-    have h1 := hq (pow gamma (1019 + i))
-    have h2 := hq2 (pow gamma (1019 + i))
-    rw [qsFoldLong_zero (pow gamma (1019 + i)) qs hz, add_zero] at h1
-    rw [qsFoldLong_zero (pow gamma (1019 + i)) qs2 hz, add_zero] at h2
-    have hpoly' : unpack 15 (Checksum.longPolymod c1) = unpack 15 (Checksum.longPolymod c2) :=
-      congrArg (unpack 15) hpoly
-    simp only [Checksum.longPolymod] at hpoly'
-    unfold initResidue at h1 h2
-    have hpoly'' := congrArg (evalF (pow gamma (1019 + i))) hpoly'
-    rw [h1, h2, hlen] at hpoly''
-    have hce : evalF (pow gamma (1019 + i)) c1.reverse = evalF (pow gamma (1019 + i)) c2.reverse := by
-      have h4 := congrArg (add (mul (pow (pow gamma (1019 + i)) c2.length)
-          (evalF (pow gamma (1019 + i)) (unpack 15 36798899)))) hpoly''
-      rw [add_cancel_left, add_cancel_left] at h4
-      exact h4
-    rw [evalF_zipAdd _ _ _ (by simp [List.length_reverse, hlen]), hce]
-    exact add_self _
-  have hzero := sparse_zero (List.zipWith Field.add c1.reverse c2.reverse) gamma 1023 1019
-    gamma_ne_zero (fun a b ha hb h => gamma_inj_below ha hb h) hDwt hDlen hvan
-  have hrev : c1.reverse = c2.reverse := by
-    apply List.ext_getElem (by simp [List.length_reverse, hlen])
-    intro j h1' h2'
-    have hDj := hzero ((List.zipWith Field.add c1.reverse c2.reverse)[j]'(by
-      simp [List.length_zipWith, List.length_reverse, hlen] at h1' h2' ⊢; omega)) (List.getElem_mem _)
-    simp only [List.getElem_zipWith] at hDj
-    exact (Field.add_eq_zero _ _).mp hDj
-  exact List.reverse_inj.mp hrev
+  apply detection_of_evaluations gamma 1023 1019 gamma_ne_zero
+    (fun a b ha hb h => gamma_inj_below ha hb h) c1 c2 hlen (by omega) hwt
+  intro i hi
+  have hroot : 1019 + i ∈ longRoots :=
+    long_consecutive_roots (1019 + i) (by simp [List.mem_range', hi])
+  have hz := evalF_longGenerator_zero (1019 + i) hroot
+  have h1 := hq (pow gamma (1019 + i))
+  have h2 := hq2 (pow gamma (1019 + i))
+  rw [qsFoldLong_zero (pow gamma (1019 + i)) qs hz, add_zero] at h1
+  rw [qsFoldLong_zero (pow gamma (1019 + i)) qs2 hz, add_zero] at h2
+  have hpoly' : unpack 15 (Checksum.longPolymod c1) = unpack 15 (Checksum.longPolymod c2) :=
+    congrArg (unpack 15) hpoly
+  simp only [Checksum.longPolymod] at hpoly'
+  have hpoly'' := congrArg (evalF (pow gamma (1019 + i))) hpoly'
+  rw [h1, h2, hlen] at hpoly''
+  have hce : evalF (pow gamma (1019 + i)) c1.reverse = evalF (pow gamma (1019 + i)) c2.reverse := by
+    have h4 := congrArg (add (mul (pow (pow gamma (1019 + i)) c2.length)
+        (evalF (pow gamma (1019 + i)) (unpack 15 Checksum.initResidue)))) hpoly''
+    rw [add_cancel_left, add_cancel_left] at h4
+    exact h4
+  exact hce
 
 /-- Packaged as an assertion about the executable regular verifier. -/
 theorem verifyRegular_detects (c1 c2 : List Symbol) (hlen : c1.length = c2.length)
@@ -1141,69 +903,6 @@ theorem verifyLong_detects (c1 c2 : List Symbol) (hlen : c1.length = c2.length)
   obtain ⟨hb2, hp2⟩ := h2
   exact long_detection c1 c2 hlen (of_decide_eq_true hb1) (hp1.trans hp2.symm) hwt
 
-
-/-- A filtered list counts at most one element when all its members agree. -/
-private theorem filter_const_length_le_one (l : List Nat) (a : Nat) (hnodup : l.Nodup)
-    (h : ∀ x ∈ l, x = a) : l.length ≤ 1 := by
-  cases l with
-  | nil => simp
-  | cons x xs =>
-    have hx : x = a := h x (by simp)
-    have hnotin : x ∉ xs := (List.nodup_cons.mp hnodup).1
-    cases xs with
-    | nil => simp
-    | cons y ys =>
-      have hy : y = a := h y (by simp)
-      rw [hy, ← hx] at hnotin
-      exact absurd List.mem_cons_self hnotin
-
-/-- The filter/not-filter count split. -/
-private theorem length_filter_split (l : List α) (p : α → Bool) :
-    (l.filter p).length + (l.filter (fun a => !p a)).length = l.length := by
-  induction l with
-  | nil => rfl
-  | cons a as ih =>
-    by_cases ha : p a = true
-    · rw [List.filter_cons_of_pos ha, List.filter_cons_of_neg (by simp [ha])]
-      simp only [List.length_cons]
-      omega
-    · rw [List.filter_cons_of_neg (by simp [ha]), List.filter_cons_of_pos (by simp [ha])]
-      simp only [List.length_cons]
-      omega
-
-/-- A duplicate-free list of members of `E` is no longer than `E`. -/
-private theorem nodup_length_le_of_all_mem (l E : List Nat) (hnodup : l.Nodup)
-    (hmem : ∀ x ∈ l, x ∈ E) : l.length ≤ E.length := by
-  induction E generalizing l with
-  | nil =>
-    have : l = [] := by
-      cases l with
-      | nil => rfl
-      | cons x xs => exact absurd (hmem x (by simp)) (by simp)
-    rw [this]
-    exact Nat.le_refl _
-  | cons e E' ih =>
-    have hsplit : l.length = (l.filter (· == e)).length + (l.filter (fun x => !(x == e))).length :=
-      (length_filter_split l (· == e)).symm
-    have hle1 : (l.filter (· == e)).length ≤ 1 := by
-      apply filter_const_length_le_one _ e
-      · exact List.Sublist.nodup List.filter_sublist hnodup
-      · intro x hx
-        exact beq_iff_eq.mp (List.mem_filter.mp hx).2
-    have hrest : (l.filter (fun x => !(x == e))).length ≤ E'.length := by
-      apply ih (l.filter (fun x => !(x == e)))
-      · exact List.Sublist.nodup List.filter_sublist hnodup
-      · intro x hx
-        have hxl := (List.mem_filter.mp hx).1
-        have hxne : x ≠ e := by
-          intro heq
-          exact absurd ((List.mem_filter.mp hx).2) (by simp [heq])
-        have hxe : x ∈ e :: E' := hmem x hxl
-        rcases List.mem_cons.mp hxe with h | h
-        · exact absurd h hxne
-        · exact h
-    have hlen : (e :: E').length = E'.length + 1 := by simp
-    omega
 
 /-- The indices where two equal-length symbol lists differ. -/
 private def diffIndices (c1 c2 : List Symbol) : List Nat :=
@@ -1259,6 +958,51 @@ private theorem mem_diffIndices (c1 c2 : List Symbol) (hlen : c1.length = c2.len
   · simp only [List.getElem_zip]
     exact decide_eq_true hdiff
 
+/-- The triangle bound for symbol differences, independent of checksum variant. -/
+private theorem substitutions_weight (received c1 c2 : List Symbol)
+    (hlen1 : received.length = c1.length) (hlen2 : received.length = c2.length)
+    (hd1 : ((received.zip c1).filter (fun p => p.1 ≠ p.2)).length ≤ 4)
+    (hd2 : ((received.zip c2).filter (fun p => p.1 ≠ p.2)).length ≤ 4) :
+    ((c1.zip c2).filter (fun p => p.1 ≠ p.2)).length ≤ 8 := by
+  have hsub : ∀ x ∈ diffIndices c1 c2, x ∈ diffIndices c1 received ++ diffIndices received c2 := by
+    intro x hx
+    rw [diffIndices] at hx ⊢
+    rw [List.mem_append]
+    obtain ⟨p, hp, hpx⟩ := List.mem_map.mp hx
+    have hpf := (List.mem_filter.mp hp).2
+    have hpm := (List.mem_filter.mp hp).1
+    obtain ⟨_, hlt, heq⟩ := List.mem_zipIdx hpm
+    rw [List.getElem_zip] at heq
+    have hc12 : c1.length = c2.length := by omega
+    have hz : (c1.zip c2).length = c1.length := by
+      rw [List.length_zip, hc12, Nat.min_self]
+    have hilt : p.2 < c1.length := by omega
+    simp only [Nat.sub_zero] at heq
+    have h11 : p.1.1 = c1[p.2]'hilt := by
+      rw [heq]
+    have h12 : p.1.2 = c2[p.2]'(by omega) := by
+      rw [heq]
+    have hd : c1[p.2]'hilt ≠ c2[p.2]'(by omega) := by
+      rw [h11, h12] at hpf
+      exact of_decide_eq_true hpf
+    by_cases hcr : c1[p.2]'hilt = received[p.2]'(by omega)
+    · right
+      apply mem_diffIndices _ _ hlen2
+      · show received[x]'(by omega) ≠ c2[x]'(by omega)
+        simp only [← hpx]
+        rw [hcr] at hd
+        exact hd
+    · left
+      apply mem_diffIndices _ _ hlen1.symm
+      · show c1[x]'(by omega) ≠ received[x]'(by omega)
+        simp only [← hpx]
+        exact hcr
+  have hle := (diffIndices_nodup _ _).length_le_of_subset hsub
+  rw [List.length_append] at hle
+  simp only [diffIndices_length] at hle
+  rw [zip_filter_ne_length_comm c1 received] at hle
+  omega
+
 /-- Four-substitution correction is unique: any two valid strings within
 distance four of a received string are identical. -/
 theorem regular_substitutions_unique (received c1 c2 : List Symbol)
@@ -1270,46 +1014,8 @@ theorem regular_substitutions_unique (received c1 c2 : List Symbol)
   simp only [Checksum.verifyRegular, Bool.and_eq_true, beq_iff_eq] at h1 h2
   obtain ⟨hb1, hp1⟩ := h1
   obtain ⟨hb2, hp2⟩ := h2
-  have hwt : ((c1.zip c2).filter (fun p => p.1 ≠ p.2)).length ≤ 8 := by
-    have hsub : ∀ x ∈ diffIndices c1 c2, x ∈ diffIndices c1 received ++ diffIndices received c2 := by
-      intro x hx
-      rw [diffIndices] at hx ⊢
-      rw [List.mem_append]
-      obtain ⟨p, hp, hpx⟩ := List.mem_map.mp hx
-      have hpf := (List.mem_filter.mp hp).2
-      have hpm := (List.mem_filter.mp hp).1
-      obtain ⟨_, hlt, heq⟩ := List.mem_zipIdx hpm
-      rw [List.getElem_zip] at heq
-      have hc12 : c1.length = c2.length := by omega
-      have hz : (c1.zip c2).length = c1.length := by
-        rw [List.length_zip, hc12, Nat.min_self]
-      have hilt : p.2 < c1.length := by omega
-      simp only [Nat.sub_zero] at heq
-      have h11 : p.1.1 = c1[p.2]'hilt := by
-        rw [heq]
-      have h12 : p.1.2 = c2[p.2]'(by omega) := by
-        rw [heq]
-      have hd : c1[p.2]'hilt ≠ c2[p.2]'(by omega) := by
-        rw [h11, h12] at hpf
-        exact of_decide_eq_true hpf
-      by_cases hcr : c1[p.2]'hilt = received[p.2]'(by omega)
-      · right
-        apply mem_diffIndices _ _ hlen2
-        · show received[x]'(by omega) ≠ c2[x]'(by omega)
-          simp only [← hpx]
-          rw [hcr] at hd
-          exact hd
-      · left
-        apply mem_diffIndices _ _ hlen1.symm
-        · show c1[x]'(by omega) ≠ received[x]'(by omega)
-          simp only [← hpx]
-          exact hcr
-    have hle := nodup_length_le_of_all_mem _ _ (diffIndices_nodup _ _) hsub
-    rw [List.length_append] at hle
-    simp only [diffIndices_length] at hle
-    rw [zip_filter_ne_length_comm c1 received] at hle
-    omega
-  exact regular_detection c1 c2 (by omega) hbound (by rw [hp1, hp2]) hwt
+  exact regular_detection c1 c2 (by omega) hbound (by rw [hp1, hp2])
+    (substitutions_weight received c1 c2 hlen1 hlen2 hd1 hd2)
 
 /-- Long-checksum four-substitution uniqueness. -/
 theorem long_substitutions_unique (received c1 c2 : List Symbol)
@@ -1321,46 +1027,40 @@ theorem long_substitutions_unique (received c1 c2 : List Symbol)
   simp only [Checksum.verifyLong, Bool.and_eq_true, beq_iff_eq] at h1 h2
   obtain ⟨hb1, hp1⟩ := h1
   obtain ⟨hb2, hp2⟩ := h2
-  have hwt : ((c1.zip c2).filter (fun p => p.1 ≠ p.2)).length ≤ 8 := by
-    have hsub : ∀ x ∈ diffIndices c1 c2, x ∈ diffIndices c1 received ++ diffIndices received c2 := by
-      intro x hx
-      rw [diffIndices] at hx ⊢
-      rw [List.mem_append]
-      obtain ⟨p, hp, hpx⟩ := List.mem_map.mp hx
-      have hpf := (List.mem_filter.mp hp).2
-      have hpm := (List.mem_filter.mp hp).1
-      obtain ⟨_, hlt, heq⟩ := List.mem_zipIdx hpm
-      rw [List.getElem_zip] at heq
-      have hc12 : c1.length = c2.length := by omega
-      have hz : (c1.zip c2).length = c1.length := by
-        rw [List.length_zip, hc12, Nat.min_self]
-      have hilt : p.2 < c1.length := by omega
-      simp only [Nat.sub_zero] at heq
-      have h11 : p.1.1 = c1[p.2]'hilt := by
-        rw [heq]
-      have h12 : p.1.2 = c2[p.2]'(by omega) := by
-        rw [heq]
-      have hd : c1[p.2]'hilt ≠ c2[p.2]'(by omega) := by
-        rw [h11, h12] at hpf
-        exact of_decide_eq_true hpf
-      by_cases hcr : c1[p.2]'hilt = received[p.2]'(by omega)
-      · right
-        apply mem_diffIndices _ _ hlen2
-        · show received[x]'(by omega) ≠ c2[x]'(by omega)
-          simp only [← hpx]
-          rw [hcr] at hd
-          exact hd
-      · left
-        apply mem_diffIndices _ _ hlen1.symm
-        · show c1[x]'(by omega) ≠ received[x]'(by omega)
-          simp only [← hpx]
-          exact hcr
-    have hle := nodup_length_le_of_all_mem _ _ (diffIndices_nodup _ _) hsub
-    rw [List.length_append] at hle
-    simp only [diffIndices_length] at hle
-    rw [zip_filter_ne_length_comm c1 received] at hle
-    omega
-  exact long_detection c1 c2 (by omega) hbound (by rw [hp1, hp2]) hwt
+  exact long_detection c1 c2 (by omega) hbound (by rw [hp1, hp2])
+    (substitutions_weight received c1 c2 hlen1 hlen2 hd1 hd2)
+
+/-- Differences are confined to the erased positions. -/
+private theorem erasures_weight (c1 c2 : List Symbol) (E : List Nat)
+    (hlen : c1.length = c2.length) (hE : E.length ≤ 8)
+    (hagree : ∀ i : Nat, ∀ hi : i < c1.length, i ∉ E →
+      c1[i]'hi = c2[i]'(by omega)) :
+    ((c1.zip c2).filter (fun p => p.1 ≠ p.2)).length ≤ 8 := by
+  have hsub : ∀ x ∈ diffIndices c1 c2, x ∈ E := by
+    intro x hx
+    rw [diffIndices] at hx
+    obtain ⟨p, hp, hpx⟩ := List.mem_map.mp hx
+    have hpf := (List.mem_filter.mp hp).2
+    have hpm := (List.mem_filter.mp hp).1
+    obtain ⟨_, hlt, heq⟩ := List.mem_zipIdx hpm
+    rw [List.getElem_zip] at heq
+    have hz : (c1.zip c2).length = c1.length := by
+      rw [List.length_zip, hlen, Nat.min_self]
+    have hilt : p.2 < c1.length := by omega
+    simp only [Nat.sub_zero] at heq
+    have h11 : p.1.1 = c1[p.2]'hilt := by
+      rw [heq]
+    have h12 : p.1.2 = c2[p.2]'(by omega) := by
+      rw [heq]
+    apply Classical.byContradiction
+    intro hxE
+    have hd : c1[p.2]'hilt ≠ c2[p.2]'(by omega) := by
+      rw [h11, h12] at hpf
+      exact of_decide_eq_true hpf
+    exact hd (hagree p.2 hilt (by rw [hpx]; exact hxE))
+  have hle := (diffIndices_nodup _ _).length_le_of_subset hsub
+  rw [diffIndices_length] at hle
+  omega
 
 /-- Erasure correction is unique: two valid strings agreeing at every
 non-erased position are identical when at most eight positions are erased. -/
@@ -1373,33 +1073,8 @@ theorem regular_erasures_unique (c1 c2 : List Symbol) (E : List Nat)
   simp only [Checksum.verifyRegular, Bool.and_eq_true, beq_iff_eq] at h1 h2
   obtain ⟨hb1, hp1⟩ := h1
   obtain ⟨hb2, hp2⟩ := h2
-  have hwt : ((c1.zip c2).filter (fun p => p.1 ≠ p.2)).length ≤ 8 := by
-    have hsub : ∀ x ∈ diffIndices c1 c2, x ∈ E := by
-      intro x hx
-      rw [diffIndices] at hx
-      obtain ⟨p, hp, hpx⟩ := List.mem_map.mp hx
-      have hpf := (List.mem_filter.mp hp).2
-      have hpm := (List.mem_filter.mp hp).1
-      obtain ⟨_, hlt, heq⟩ := List.mem_zipIdx hpm
-      rw [List.getElem_zip] at heq
-      have hz : (c1.zip c2).length = c1.length := by
-        rw [List.length_zip, hlen, Nat.min_self]
-      have hilt : p.2 < c1.length := by omega
-      simp only [Nat.sub_zero] at heq
-      have h11 : p.1.1 = c1[p.2]'hilt := by
-        rw [heq]
-      have h12 : p.1.2 = c2[p.2]'(by omega) := by
-        rw [heq]
-      apply Classical.byContradiction
-      intro hxE
-      have hd : c1[p.2]'hilt ≠ c2[p.2]'(by omega) := by
-        rw [h11, h12] at hpf
-        exact of_decide_eq_true hpf
-      exact hd (hagree p.2 hilt (by rw [hpx]; exact hxE))
-    have hle := nodup_length_le_of_all_mem _ _ (diffIndices_nodup _ _) hsub
-    rw [diffIndices_length] at hle
-    omega
-  exact regular_detection c1 c2 (by omega) hbound (by rw [hp1, hp2]) hwt
+  exact regular_detection c1 c2 (by omega) hbound (by rw [hp1, hp2])
+    (erasures_weight c1 c2 E hlen hE hagree)
 
 /-- Long-checksum erasure uniqueness. -/
 theorem long_erasures_unique (c1 c2 : List Symbol) (E : List Nat)
@@ -1411,33 +1086,8 @@ theorem long_erasures_unique (c1 c2 : List Symbol) (E : List Nat)
   simp only [Checksum.verifyLong, Bool.and_eq_true, beq_iff_eq] at h1 h2
   obtain ⟨hb1, hp1⟩ := h1
   obtain ⟨hb2, hp2⟩ := h2
-  have hwt : ((c1.zip c2).filter (fun p => p.1 ≠ p.2)).length ≤ 8 := by
-    have hsub : ∀ x ∈ diffIndices c1 c2, x ∈ E := by
-      intro x hx
-      rw [diffIndices] at hx
-      obtain ⟨p, hp, hpx⟩ := List.mem_map.mp hx
-      have hpf := (List.mem_filter.mp hp).2
-      have hpm := (List.mem_filter.mp hp).1
-      obtain ⟨_, hlt, heq⟩ := List.mem_zipIdx hpm
-      rw [List.getElem_zip] at heq
-      have hz : (c1.zip c2).length = c1.length := by
-        rw [List.length_zip, hlen, Nat.min_self]
-      have hilt : p.2 < c1.length := by omega
-      simp only [Nat.sub_zero] at heq
-      have h11 : p.1.1 = c1[p.2]'hilt := by
-        rw [heq]
-      have h12 : p.1.2 = c2[p.2]'(by omega) := by
-        rw [heq]
-      apply Classical.byContradiction
-      intro hxE
-      have hd : c1[p.2]'hilt ≠ c2[p.2]'(by omega) := by
-        rw [h11, h12] at hpf
-        exact of_decide_eq_true hpf
-      exact hd (hagree p.2 hilt (by rw [hpx]; exact hxE))
-    have hle := nodup_length_le_of_all_mem _ _ (diffIndices_nodup _ _) hsub
-    rw [diffIndices_length] at hle
-    omega
-  exact long_detection c1 c2 (by omega) hbound (by rw [hp1, hp2]) hwt
+  exact long_detection c1 c2 (by omega) hbound (by rw [hp1, hp2])
+    (erasures_weight c1 c2 E hlen hE hagree)
 
 end GF1024
 

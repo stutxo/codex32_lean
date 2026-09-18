@@ -33,12 +33,7 @@ end Alphabet
 inductive Threshold where
   | unshared
   | shared (k : Fin 8)
-  deriving Repr, DecidableEq
-
-instance : BEq Threshold := ⟨fun a b => decide (a = b)⟩
-instance : LawfulBEq Threshold where
-  eq_of_beq := by simp only [BEq.beq, decide_eq_true_eq]; exact id
-  rfl := by intro a; simp only [BEq.beq, decide_eq_true_eq]
+  deriving Repr, DecidableEq, BEq, ReflBEq, LawfulBEq
 
 namespace Threshold
 
@@ -62,12 +57,7 @@ end Threshold
 structure Identifier where
   symbols : List Symbol
   length_eq : symbols.length = 4
-  deriving Repr, DecidableEq
-
-instance : BEq Identifier := ⟨fun a b => decide (a = b)⟩
-instance : LawfulBEq Identifier where
-  eq_of_beq := by simp only [BEq.beq, decide_eq_true_eq]; exact id
-  rfl := by intro a; simp only [BEq.beq, decide_eq_true_eq]
+  deriving Repr, DecidableEq, BEq, ReflBEq, LawfulBEq
 
 namespace Identifier
 def parse (s : String) : Except Error Identifier := do

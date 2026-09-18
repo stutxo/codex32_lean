@@ -40,31 +40,25 @@ theorem create_selects_valid_length (data checksum : List Symbol)
     checksumLength (data ++ checksum).length = some checksum.length := by
   unfold create at h
   split at h
-  · cases h
-    simp only [List.length_append, createRegular_length]
-    apply (checksumLength_regular_iff _).2
-    omega
-  · split at h
+  · unfold createBounded at h
+    split at h
+    · cases h
+      simp only [List.length_append, createRegular_length]
+      apply (checksumLength_regular_iff _).2
+      omega
     · cases h
       simp only [List.length_append, createLong_length]
       apply (checksumLength_long_iff _).2
       omega
-    · cases h
+  · cases h
 
 /-- Exactly 1003 data symbols can precede the largest supported checksum. -/
 theorem create_exists_iff (data : List Symbol) :
     (∃ checksum, create data = .ok checksum) ↔ data.length ≤ 1003 := by
   unfold create
   split
-  · constructor
-    · intro _; omega
-    · intro _; exact ⟨_, rfl⟩
-  · split
-    · constructor
-      · intro _; omega
-      · intro _; exact ⟨_, rfl⟩
-    · simp_all
-      omega
+  · exact ⟨fun _ => by assumption, fun _ => ⟨_, rfl⟩⟩
+  · simp_all
 
 /-- Variant selection prevents acceptance of forbidden expanded lengths. -/
 theorem verify_rejects_invalid_length (data : List Symbol)
@@ -268,7 +262,7 @@ private theorem regularFold_toNat (data : List Symbol) (r : BitVec 65) :
 /-- The arbitrary-precision regular recurrence stays within its 65-bit register. -/
 theorem regularPolymod_lt (data : List Symbol) : regularPolymod data < 2^65 := by
   change data.foldl (step 60 0x0fffffffffffffff regularGenerators)
-    (BitVec.ofNat 65 0x23181b3).toNat < 2^65
+    (BitVec.ofNat 65 initResidue).toNat < 2^65
   rw [← regularFold_toNat]
   exact BitVec.isLt _
 
@@ -277,9 +271,9 @@ the separate verifier also enforces the checksum's length limit. -/
 theorem regularPolymod_createRegular (data : List Symbol) :
     regularPolymod (data ++ createRegular data) = regularConstant := by
   let r : BitVec 65 := (data.map (fun v => BitVec.ofNat 65 v.val)).foldl regularStepBV
-    (BitVec.ofNat 65 0x23181b3)
+    (BitVec.ofNat 65 initResidue)
   have hr : r.toNat = regularPolymod data := by
-    exact regularFold_toNat data (BitVec.ofNat 65 0x23181b3)
+    exact regularFold_toNat data (BitVec.ofNat 65 initResidue)
   have hz : ((List.replicate 13 0).foldl regularStepBV r).toNat =
       regularPolymod (data ++ List.replicate 13 (Symbol.ofNat 0)) := by
     have h := regularFold_toNat (List.replicate 13 (Symbol.ofNat 0)) r
@@ -354,16 +348,16 @@ private theorem longFold_toNat (data : List Symbol) (r : BitVec 75) :
 /-- The arbitrary-precision long recurrence stays within its 75-bit register. -/
 theorem longPolymod_lt (data : List Symbol) : longPolymod data < 2^75 := by
   change data.foldl (step 70 0x3fffffffffffffffff longGenerators)
-    (BitVec.ofNat 75 0x23181b3).toNat < 2^75
+    (BitVec.ofNat 75 initResidue).toNat < 2^75
   rw [← longFold_toNat]
   exact BitVec.isLt _
 /-- The corresponding unconditional residue identity for the long checksum. -/
 theorem longPolymod_createLong (data : List Symbol) :
     longPolymod (data ++ createLong data) = longConstant := by
   let r : BitVec 75 := (data.map (fun v => BitVec.ofNat 75 v.val)).foldl longStepBV
-    (BitVec.ofNat 75 0x23181b3)
+    (BitVec.ofNat 75 initResidue)
   have hr : r.toNat = longPolymod data := by
-    exact longFold_toNat data (BitVec.ofNat 75 0x23181b3)
+    exact longFold_toNat data (BitVec.ofNat 75 initResidue)
   have hz : ((List.replicate 15 0).foldl longStepBV r).toNat =
       longPolymod (data ++ List.replicate 15 (Symbol.ofNat 0)) := by
     have h := longFold_toNat (List.replicate 15 (Symbol.ofNat 0)) r
@@ -399,14 +393,15 @@ theorem verify_create (data checksum : List Symbol)
     (h : create data = .ok checksum) : verify (data ++ checksum) = true := by
   unfold create at h
   split at h
-  · cases h
-    have hl : checksumLength (data ++ createRegular data).length = some 13 := by
-      apply (checksumLength_regular_iff _).2
-      simp only [List.length_append, createRegular_length]
-      omega
-    simp only [verify, hl]
-    exact verifyRegular_createRegular data (by omega)
-  · split at h
+  · unfold createBounded at h
+    split at h
+    · cases h
+      have hl : checksumLength (data ++ createRegular data).length = some 13 := by
+        apply (checksumLength_regular_iff _).2
+        simp only [List.length_append, createRegular_length]
+        omega
+      simp only [verify, hl]
+      exact verifyRegular_createRegular data (by omega)
     · cases h
       have hl : checksumLength (data ++ createLong data).length = some 15 := by
         apply (checksumLength_long_iff _).2
@@ -414,6 +409,6 @@ theorem verify_create (data checksum : List Symbol)
         omega
       simp only [verify, hl]
       exact verifyLong_createLong data (by omega)
-    · cases h
+  · cases h
 
 end Codex32.Checksum

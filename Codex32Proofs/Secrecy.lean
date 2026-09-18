@@ -13,17 +13,6 @@ open Proofs
 
 set_option maxHeartbeats 0
 
-private theorem message_ext (a b : Message) (threshold : a.threshold = b.threshold)
-    (identifier : a.identifier = b.identifier) (index : a.index = b.index)
-    (payload : a.payload = b.payload) : a = b := by
-  cases a
-  cases b
-  cases threshold
-  cases identifier
-  cases index
-  cases payload
-  rfl
-
 /-- Complete public existing-secret initialization followed by checked share
 evaluation. Errors remain part of the observation type. -/
 def observeExisting (secret : Message) (entropy : List (List Symbol))

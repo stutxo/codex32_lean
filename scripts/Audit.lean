@@ -1,4 +1,5 @@
 import Codex32Proofs
+import Codex32Test.VectorProofs
 import Lean.Util.CollectAxioms
 import Lean.Elab.Command
 

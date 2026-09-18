@@ -30,10 +30,11 @@ Codex32.lean                 # public library import
 Codex32/                     # executable BIP 93 implementation
 Codex32Proofs.lean           # optional proof collection import
 Codex32Proofs/               # correctness theorems
-Codex32Test.lean             # shared test fixtures
+Codex32Test.lean             # shared test fixtures and vector proof
 Codex32Test/
   Main.lean                 # vector and regression test runner
   Vectors.lean              # official BIP 93 fixtures
+  VectorProofs.lean         # kernel-checked official-vector recovery
   Cli/                      # test-only command-line harness
     Main.lean
     Input.lean
@@ -83,7 +84,7 @@ Proofs began after the official vector suite passed. All included theorems are c
 
 The error-detection proof decomposes the claim into independently verified pieces: the extension field `GF(1024) = GF(32)[ζ]/(ζ² + ζ + 1)` with its laws (`GF1024.lean`), the multiplicative orders and generator polynomials re-derived from first principles (no checksum constant is trusted from the BIP), a Vandermonde/uniqueness argument (`vandermonde`), the BCH bound specialized to weight ≤ 8 at eight consecutive roots (`sparse_zero`), and a bridge showing each polymod register evaluates to `xⁿ·init + M + g·Q` at every `x : GF1024` (`telescope`/`telescope_long`), so equal-length valid strings agree at every root of `g`. The correction-uniqueness claims are short corollaries of the detection theorem: the substitution case chains two distance-4 bounds through the triangle inequality on differing-position sets, and the erasure case bounds the differing-position count by the erasure-set size, both via a shared nodup-subset counting lemma.
 
-The recovery theorems cover every supported threshold (2–9), any order of recovery indices, and long shares. Initialization is included: admissible fresh inputs use a supported master-seed payload size; existing-secret inputs may use any generic payload size. Both helpers are proved to produce valid sources, and validation of every generated recovery set is also proved to succeed. Existing secrets are recovered exactly, including padding. The earlier `recover_generated_threshold_two_message` theorem also retains a direct create/derive/recover sequence, and the official vector 2 API result remains kernel-checked.
+The recovery theorems cover every supported threshold (2–9), any order of recovery indices, and long shares. Initialization is included: admissible fresh inputs use a supported master-seed payload size; existing-secret inputs may use any generic payload size. Both helpers are proved to produce valid sources, and validation of every generated recovery set is also proved to succeed. Existing secrets are recovered exactly, including padding. The earlier `recover_generated_threshold_two_message` theorem also retains a direct create/derive/recover sequence, and the official vector 2 API result remains kernel-checked in `Codex32Test.VectorProofs`. The general proof collection does not import test fixtures.
 
 The secrecy proof compares full distributions, including correlations between payload columns and shares. A polynomial mask changes the secret while vanishing at every observed index; adding its evaluations to the random payloads is an involution. `Uniform.allEntropy` enumerates every entropy matrix exactly once, with cardinality `32^(rows * columns)`. The mask permutes this sample space, so every event on the observed messages has the same count for either secret, with the same positive probability denominator. This covers fixed selections of fewer than the threshold number of non-secret indices, including initial random-share indices. Threshold, identifier, payload length and selected indices are public; full symbol uniformity is an explicit randomness model, not a claim about an external random generator.
 
@@ -94,7 +95,7 @@ With Lean's `elan` installed, the pinned `lean-toolchain` selects the compiler:
 ```sh
 lake build
 lake test
-lake build Codex32Proofs
+lake build Codex32Proofs Codex32Test.VectorProofs
 lake env lean scripts/Audit.lean
 bash scripts/test-cli.sh
 ```
@@ -105,7 +106,7 @@ In the original workspace, the official toolchain was also downloaded locally:
 export PATH="$PWD/.toolchain/bin:$PATH"
 ```
 
-`lake build` builds only the pure library. `lake test` builds and runs the native test executable, failing on any mismatch. Proof checking is explicit and separate. The audit rejects core/proof declarations that depend on admissions, native proof evaluation, or nonstandard axioms; it is not a secret scanner. The CLI script builds the test harness and runs its stream, entropy-adapter, and integration tests. All five checks run in GitHub Actions.
+`lake build` builds only the pure library. `lake test` builds and runs the native test executable, failing on any mismatch. Proof checking is explicit and separate. The audit covers the general proofs and the official-vector proof, rejecting project declarations that depend on admissions, native proof evaluation, or nonstandard axioms; it is not a secret scanner. The CLI script builds the test harness and runs its stream, entropy-adapter, and integration tests. All five checks run in GitHub Actions.
 
 ### CLI test harness
 

@@ -86,20 +86,6 @@ private theorem buildInitial_success (threshold : Threshold) (identifier : Ident
         · exact firstLength
         · exact payloadLengths m hm
 
-private theorem validate_checked (checked : Shares.ValidatedShareSet) :
-    Shares.validate checked.messages = .ok checked := by
-  cases checked with
-  | mk messages first firstPresent nonzeroThreshold exactCount sameThreshold
-      sameIdentifier sameLength distinctIndices =>
-    cases messages with
-    | nil => simp at firstPresent
-    | cons head rest =>
-      have equal : head = first := by simpa using firstPresent
-      subst head
-      simp only [Shares.validate, List.head?_cons, nonzeroThreshold, exactCount,
-        distinctIndices, ↓reduceDIte]
-      rw [dite_eq_left sameThreshold, dite_eq_left sameIdentifier, dite_eq_left sameLength]
-
 private theorem checked_of_common (messages : List Message)
     (threshold : Threshold) (identifier : Identifier) (length : Nat)
     (nonzero : threshold.count ≠ 0) (count : messages.length = threshold.count)
@@ -132,7 +118,7 @@ message builder, with all rejection branches discharged. -/
 theorem initializeFresh_eq (threshold : Threshold) (identifier : Identifier)
     (payloads : List (List Symbol)) (length : Nat)
     (nonzero : threshold.count ≠ 0) (count : payloads.length = threshold.count)
-    (supported : length ∈ [26, 32, 39, 45, 52, 103])
+    (supported : length ∈ Seed.supportedPayloadLengths)
     (lengths : ∀ p ∈ payloads, p.length = length) :
     Shares.initializeFresh threshold identifier payloads =
       initialMessages threshold identifier payloads := by
@@ -140,7 +126,7 @@ theorem initializeFresh_eq (threshold : Threshold) (identifier : Identifier)
   | nil => simp at count; exact False.elim (nonzero count.symm)
   | cons first rest =>
     have firstLength := lengths first (by simp)
-    have supported' : ([26, 32, 39, 45, 52, 103] : List Nat).contains first.length = true :=
+    have supported' : Seed.validPayloadLength first.length = true :=
       List.contains_iff_mem.mpr (by simpa only [firstLength] using supported)
     have equalLengths : (first :: rest).any (fun p => p.length != first.length) = false := by
       rw [List.any_eq_false]
@@ -149,7 +135,7 @@ theorem initializeFresh_eq (threshold : Threshold) (identifier : Identifier)
     simp only [Shares.initializeFresh, beq_eq_false_iff_ne.mpr nonzero,
       count, bne_self_eq_false, Bool.false_eq_true, ↓reduceIte, List.head?_cons,
       equalLengths]
-    change (if (!([26, 32, 39, 45, 52, 103] : List Nat).contains first.length) = true
+    change (if (!Seed.validPayloadLength first.length) = true
       then _ else _) = _
     simp only [supported', Bool.not_true, Bool.false_eq_true, ↓reduceIte]
     rfl
@@ -196,7 +182,7 @@ payloads and fixed indices; no validation hypothesis is assumed. -/
 theorem initializeFresh_valid (threshold : Threshold) (identifier : Identifier)
     (payloads : List (List Symbol)) (length : Nat)
     (nonzero : threshold.count ≠ 0) (count : payloads.length = threshold.count)
-    (supported : length ∈ [26, 32, 39, 45, 52, 103])
+    (supported : length ∈ Seed.supportedPayloadLengths)
     (lengths : ∀ p ∈ payloads, p.length = length) :
     ∃ checked : Shares.ValidatedShareSet,
       Shares.initializeFresh threshold identifier payloads = .ok checked.messages ∧
@@ -205,7 +191,7 @@ theorem initializeFresh_valid (threshold : Threshold) (identifier : Identifier)
       checked.first.threshold = threshold ∧
       checked.first.identifier = identifier ∧
       checked.first.payload.length = length := by
-  have bound : length ≤ 997 := by simp at supported; omega
+  have bound : length ≤ 997 := by simp [Seed.supportedPayloadLengths] at supported; omega
   obtain ⟨messages, built, messageCount, indices, dataList, thresholds, identifiers, payloadLengths⟩ :=
     initialMessages_success threshold identifier payloads length nonzero
       (by rw [count]; exact threshold_le_nine threshold) bound lengths
@@ -267,7 +253,7 @@ choice returns the same secret, with the requested metadata and payload size. -/
 theorem initializeFresh_recover (threshold : Threshold) (identifier : Identifier)
     (payloads : List (List Symbol)) (length : Nat)
     (nonzero : threshold.count ≠ 0) (count : payloads.length = threshold.count)
-    (supported : length ∈ [26, 32, 39, 45, 52, 103])
+    (supported : length ∈ Seed.supportedPayloadLengths)
     (lengths : ∀ p ∈ payloads, p.length = length) :
     ∃ secret : Message,
       secret.threshold = threshold ∧ secret.identifier = identifier ∧

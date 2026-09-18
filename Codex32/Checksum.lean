@@ -8,6 +8,9 @@ The initial residue already incorporates the expansion of the fixed HRP `ms`.
 
 namespace Codex32.Checksum
 
+/-- The initial residue after expanding the fixed HRP `ms`. -/
+def initResidue : Nat := 0x23181b3
+
 def regularConstant : Nat := 0x10ce0795c2fd1e62a
 
 def longConstant : Nat := 0x43381e570bf4798ab26
@@ -28,10 +31,10 @@ def step (shift mask : Nat) (generators : List Nat)
     if ((top >>> i) &&& 1) == 1 then acc ^^^ generator else acc) next
 
 def regularPolymod (values : List Symbol) : Nat :=
-  values.foldl (step 60 0x0fffffffffffffff regularGenerators) 0x23181b3
+  values.foldl (step 60 0x0fffffffffffffff regularGenerators) initResidue
 
 def longPolymod (values : List Symbol) : Nat :=
-  values.foldl (step 70 0x3fffffffffffffffff longGenerators) 0x23181b3
+  values.foldl (step 70 0x3fffffffffffffffff longGenerators) initResidue
 
 /-- Choose by complete data length, including its checksum but excluding `ms1`.
 The expanded HRP contributes five symbols, not three printed characters. -/
@@ -72,11 +75,15 @@ def createLong (data : List Symbol) : List Symbol :=
   extract 15 (longPolymod (data ++ List.replicate 15 (Symbol.ofNat 0))
     ^^^ longConstant)
 
+/-- Construct the required checksum for data known to fit the maximum expanded
+codeword length, including the five HRP symbols and a 15-symbol checksum. -/
+def createBounded (data : List Symbol) (_ : data.length ≤ 1003) : List Symbol :=
+  if 5 + data.length + 13 ≤ 93 then createRegular data else createLong data
+
 /-- Construct the checksum required by BIP 93, rejecting inputs whose completed
 expanded codeword would exceed the maximum length. -/
 def create (data : List Symbol) : Except Error (List Symbol) :=
-  if 5 + data.length + 13 ≤ 93 then .ok (createRegular data)
-  else if 5 + data.length + 15 ≤ 1023 then .ok (createLong data)
+  if h : data.length ≤ 1003 then .ok (createBounded data h)
   else .error .codewordTooLong
 
 end Codex32.Checksum

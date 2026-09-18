@@ -1,4 +1,4 @@
-import Codex32.Encoding
+import Codex32.Seed
 import Codex32.Field
 
 /-! BIP 93 share derivation, recovery, and initial share generation.
@@ -11,9 +11,6 @@ serialization constructs the appropriate checksum.
 -/
 
 namespace Codex32.Shares
-
-private def supportedPayloadLength (n : Nat) : Bool :=
-  [26, 32, 39, 45, 52, 103].contains n
 
 /-- An exact-threshold set whose interpolation preconditions have been checked.
 The witnesses are propositions, erased from executable code. Keep this value
@@ -125,7 +122,7 @@ def initializeFresh (threshold : Threshold) (identifier : Identifier)
   if payloads.length != threshold.count then
     throw .wrongEntropyCount
   let some first := payloads.head? | throw .entropyRequired
-  if !supportedPayloadLength first.length then
+  if !Seed.validPayloadLength first.length then
     throw .unsupportedPayloadLength
   if payloads.any (fun p => p.length != first.length) then
     throw .mismatchedLength
