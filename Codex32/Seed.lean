@@ -70,13 +70,8 @@ def encode (seed : Seed) (identifier : Identifier) (threshold : Threshold := .un
     (padding : Symbol := 0) : Message :=
   let payload := Bits.encode seed.bytes padding
   have hlen : payload.length ≤ 997 := by
-    have sum_eight : ∀ bs : List UInt8, (bs.map (fun _ => 8 : UInt8 → Nat)).sum = bs.length * 8 := by
-      intro bs
-      induction bs with
-      | nil => rfl
-      | cons b bs ih => simp [ih, Nat.add_mul, Nat.add_comm]
     simp only [payload, Bits.encode, List.length_map, Bits.chunks, List.length_range,
-      Bits.unpack, List.length_flatMap, sum_eight]
+      Bits.unpack, List.length_flatMap, List.map_const', List.sum_replicate_nat]
     have h := seed.supported
     unfold SupportedSeedLength at h
     omega
