@@ -182,14 +182,15 @@ theorem fresh_event_translation (threshold : Threshold) (identifier : Identifier
 
 /-- Exact joint-count symmetry for fresh initialization: under independently
 uniform full-symbol entropy, every candidate secret payload has the same
-number of outcomes for every event on fewer-than-threshold distinct observed
-shares. The common sample-space denominator is `32^(threshold.count * s.length)`.
-Duplicate observation indices reduce to the distinct case by deduplication. -/
+number of outcomes for every event on messages observed at a list of fewer
+than `threshold.count` nonsecret indices. Duplicate indices are allowed and
+count toward the list-length bound. The common sample-space denominator is
+`32^(threshold.count * s.length)`. -/
 theorem initializeFresh_secrecy (threshold : Threshold) (identifier : Identifier)
     (s t : List Symbol) (sameLength : s.length = t.length)
     (nonzero : threshold.count ≠ 0)
     (supported : s.length ∈ Seed.supportedPayloadLengths)
-    (observed : List Symbol) (_distinct : observed.Nodup)
+    (observed : List Symbol)
     (secretNotObserved : (16 : Symbol) ∉ observed)
     (fewObserved : observed.length < threshold.count) (event : List Message → Bool) :
     ((Uniform.allEntropy threshold.count s.length).map

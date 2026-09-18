@@ -159,8 +159,9 @@ theorem long_valid_count (n : Nat) (hn : 15 ≤ n) :
   rw [hlen, List.length_map, Uniform.length_allWords]
 
 /-- The valid strings are exactly one `32^13`-th of all strings: a uniformly
-random string fails regular checksum verification with probability exactly
-`2^-65 ≈ 2.7×10⁻²⁰`, below the BIP's "3 in 10²⁰" bound. -/
+random string passes regular checksum verification (is a valid codeword) with
+probability exactly `2^-65 ≈ 2.7×10⁻²⁰` — the probability that a uniformly
+random error goes undetected — below the BIP's "3 in 10²⁰" bound. -/
 theorem regular_valid_fraction (n : Nat) (hn : 13 ≤ n) :
     (Uniform.allWords n).length =
       32 ^ 13 * ((Uniform.allWords n).filter (fun c =>
@@ -169,8 +170,9 @@ theorem regular_valid_fraction (n : Nat) (hn : 13 ≤ n) :
   have h : 13 + (n - 13) = n := by omega
   rw [h]
 
-/-- The long-checksum failure probability is exactly `2^-75 ≈ 2.6×10⁻²³`,
-below the BIP's "3 in 10²³" bound. -/
+/-- A uniformly random string passes long checksum verification (is a valid
+codeword) with probability exactly `2^-75 ≈ 2.6×10⁻²³` — the probability that
+a uniformly random error goes undetected — below the BIP's "3 in 10²³" bound. -/
 theorem long_valid_fraction (n : Nat) (hn : 15 ≤ n) :
     (Uniform.allWords n).length =
       32 ^ 15 * ((Uniform.allWords n).filter (fun c =>
