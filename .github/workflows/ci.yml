@@ -1,0 +1,26 @@
+name: Lean
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Install pinned official Lean toolchain
+        shell: bash
+        run: |
+          version="$(sed 's|leanprover/lean4:v||' lean-toolchain)"
+          mkdir -p "$RUNNER_TEMP/lean"
+          curl --fail --location --retry 3 "https://github.com/leanprover/lean4/releases/download/v$version/lean-$version-linux.tar.zst" -o "$RUNNER_TEMP/lean.tar.zst"
+          tar --zstd -xf "$RUNNER_TEMP/lean.tar.zst" -C "$RUNNER_TEMP/lean" --strip-components=1
+          echo "$RUNNER_TEMP/lean/bin" >> "$GITHUB_PATH"
+      - run: lake build
+      - run: lake test
+      - run: lake build Codex32Proofs
+      - run: lake env lean scripts/Audit.lean
+      - run: bash scripts/test-cli.sh

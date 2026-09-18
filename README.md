@@ -1,0 +1,121 @@
+# Codex32 in Lean 4
+
+A minimal executable implementation of [BIP 93](https://github.com/bitcoin/bips/blob/55083d36ddebcd2a039135a2f4ee74917a5803d3/bip-0093.mediawiki), with official vectors and a separate, growing collection of kernel-checked proofs. Uses Lean 4.34.0 and its bundled `Std`; no Mathlib, crypto library, or Lake package dependencies.
+
+## Specification revision
+
+Implemented the official specification fetched on **2026-09-18**, at bitcoin/bips commit `55083d36ddebcd2a039135a2f4ee74917a5803d3`. The last change to BIP 93 itself is `5117f5831bcbf0485949e5951d2954b792eded28` (2026-08-26).
+
+This revision permits master seeds of **16, 20, 24, 28, 32, or 64 bytes**. It selects regular/long checksums using the expanded codeword length, including five values for the `ms` HRP. Earlier BIP revisions accepted other seed sizes. The exact upstream text and its hash are in [`spec/`](spec/REVISION.md).
+
+## Build and test
+
+With Lean's `elan` installed, the pinned `lean-toolchain` selects the compiler:
+
+```sh
+lake build
+lake test
+lake build Codex32Proofs
+lake env lean scripts/Audit.lean
+bash scripts/test-cli.sh
+```
+
+In the original workspace, the official toolchain was also downloaded locally:
+
+```sh
+export PATH="$PWD/.toolchain/bin:$PATH"
+```
+
+`lake build` builds only the pure library. `lake test` builds and runs the native test executable, failing on any mismatch. Proof checking is explicit and separate. The audit rejects core/proof declarations that depend on admissions, native proof evaluation, or nonstandard axioms; it is not a secret scanner. The CLI script builds the application and runs its stream, entropy-adapter, and integration tests. All five checks run in GitHub Actions.
+
+## Offline command-line application
+
+Build with `lake build codex32_cli`; the executable is `.lake/build/bin/codex32_cli`. The CLI uses only Lean and its bundled libraries, with no custom native binding or additional build dependencies.
+
+```sh
+umask 077
+.lake/build/bin/codex32_cli encode cash < seed.hex > secret.codex32
+.lake/build/bin/codex32_cli decode < secret.codex32 > decoded.hex
+.lake/build/bin/codex32_cli split cash 3 5 < seed.hex > shares.codex32
+.lake/build/bin/codex32_cli recover < selected-three-shares.codex32 > recovered.hex
+```
+
+`seed.hex` contains one hexadecimal seed of a supported size. `split cash 3 5` creates five shares, any three of which recover the seed. Recovery input contains exactly the threshold number of shares, one per line. Select and store shares separately; the output file initially contains the entire set. `encode IDENTIFIER [THRESHOLD [PADDING]]` defaults to threshold 0 and padding 0. Run `--help` for the full argument contract.
+
+`split` emits shares in Bech32 field-value order (`q,p,z,r,y,…`), skipping the secret index `s`. This order is a CLI convention. Initial random shares use `a,c,d,…` as required by BIP 93; when an output index matches one of them, that original share is included unchanged and counts toward `COUNT`.
+
+Secret material enters through redirected or piped stdin, never command arguments. Interactive terminal input is rejected, input reads are bounded, and LF/CRLF endings are accepted. Validation and entropy failures produce no partial share output. Filesystem write failures can still truncate output.
+
+On Linux and macOS, `split` reads `/dev/urandom` and maps each byte to one uniform five-bit symbol, including random-share padding bits. The host's OS random generator must already be initialized. Unsupported hosts and entropy read failures abort without a fallback. This is the current CLI and integration-test entropy source; a future external entropy source is not yet implemented. The pure library already accepts caller-supplied random payloads. Integration tests run on Linux. The CLI does not add constant-time execution or secure memory erasure.
+
+## Modules and API
+
+| Module | Responsibility |
+| --- | --- |
+| `Codex32.Error` | Structured error cases and human-readable messages |
+| `Codex32.Alphabet` | `Fin 32` symbols, case-insensitive Bech32 conversion, threshold and four-symbol identifier types |
+| `Codex32.Checksum` | Arbitrary-precision regular/long polymod, construction, verification, length selection |
+| `Codex32.Encoding` | Generic Codex32 `Message`, checked parsing and lowercase/uppercase serialization |
+| `Codex32.Seed` | MSB-first bit conversion, arbitrary padding, supported seed lengths, seed encoding/decoding |
+| `Codex32.Field` | GF(32) arithmetic modulo x⁵ + x³ + 1, Lagrange weights and scalar interpolation |
+| `Codex32.Shares` | Validated share sets, initial generation, derivation, interpolation, exact-threshold recovery |
+| `Codex32Test/` | Official fixtures (`Vectors`) and executable regression tests (`Main`) |
+| `Codex32Proofs/` | Separate proofs, with `Codex32Proofs.lean` as the aggregate import |
+| `Codex32Cli/` | Optional command-line application, bounded input, OS entropy, and adapter tests |
+
+Import `Codex32` to use the library; it imports neither proofs, tests, nor CLI modules. `Encoding.parse` validates the generic format; `Seed.parse` additionally restricts it to master-seed secret/share sizes. `Seed.decodeString` requires a secret at index `s`. APIs use `Except Codex32.Error` for invalid external input; callers can pattern-match cases such as `.invalidChecksum` or use `toString` for display.
+
+`Seed.ofBytes` constructs a seed only at a supported length. `Identifier.parse` requires four Bech32 symbols. `Threshold.ofNat` accepts 0 or 2–9. `Seed.encode seed identifier threshold padding` returns a `Message`; `Seed.encodeString` additionally serializes it. Padding defaults to zero; its low required bits may be chosen arbitrarily. `Message` carries proof fields enforcing the zero-threshold/index rule and maximum payload size. Checksums are derived during serialization, avoiding stale stored checksum fields.
+
+`Shares.initializeFresh threshold identifier payloads` takes exactly `k` random full-symbol payloads at a supported master-seed size. `Shares.initializeExisting secret payloads` takes `k−1` such payloads and returns an interpolation set including the encoded secret; it also accepts generic application payload sizes, as specified by “For an existing secret”. Initial indices are `a,c,d,e,f,g,h,j,k` as required. Use `Shares.derive initial target` for a fresh target, `Shares.interpolate` for any target, and `Shares.recover shares` for exactly `k` distinct non-secret shares with matching threshold, identifier, and length. There are 31 non-secret field indices.
+
+`Shares.validate` returns a `Shares.ValidatedShareSet` carrying evidence of an exact nonzero threshold, matching metadata and payload lengths, and distinct indices. Retain this value when evaluating multiple targets: `checked.interpolate target` returns a `Message` directly, while `checked.derive target` and `checked.recover` check the operation-specific index restrictions. Payload indexing uses the stored length evidence. The list-based APIs remain available as convenience wrappers.
+
+**The pure library requires caller-supplied randomness.** Every symbol of every initial random payload, including padding bits, must be independently uniform. Zero-padding random bytes does not meet this requirement. The optional CLI supplies OS randomness for `split`; test payloads are deterministic fixtures, not an entropy generator.
+
+## Vector coverage
+
+All Codex32 portions of test vectors 1–8 and all invalid examples pass:
+
+- 34 distinct valid strings: 26 secret encodings and 8 shares, preserving all official padding variants.
+- All 55 invalid strings, including checksum, variant, length, threshold, prefix, and case failures.
+- Exact expected seed bytes, serialization, and checksum symbols.
+- Fresh/existing-secret generation and every official derived share.
+- All three pairs from vector 2 and all ten three-share subsets from vector 3.
+
+The library suite currently reports **36,294 checks**. Additional tests cover every supported seed size and threshold, all 31 share indices, replaced-share recovery, GF(32) identities, interpolation, structured errors, rejected metadata mismatches, generic existing-secret payloads, and checksum boundaries through expanded length 1023. Oversized ASCII and UTF-8 inputs exercise rejection before character conversion.
+
+The CLI has **113 integration checks** covering official encodings/recovery, all supported seed sizes, long shares at thresholds 2–9 with every threshold-sized subset of `k+1` outputs, all 31 indices, and malformed/oversized input. Adapter tests cover bounded consumption, short reads, entropy EOF and read failures, and the uniform byte-to-symbol mapping.
+
+The BIP's example `xprv` strings are retained as fixture metadata. Computing BIP 32 extended private keys requires HMAC-SHA512 and curve/key serialization outside BIP 93; these downstream values are **not tested** here. The Codex32 layer is tested through the exact master-seed bytes those examples supply.
+
+## Specification boundaries and decisions
+
+- **Generic vs. master-seed lengths:** “codex32” defines a generic format; “Master seed format” and the inline `ms32_decode` impose application sizes. Separate parsing APIs preserve both meanings. Generic payloads can contain 0–997 symbols; master-seed payloads contain 26, 32, 39, 45, 52, or 103.
+- **Existing-index interpolation:** “Generating Shares” requires a fresh target. The optimized `bech32_lagrange` in “Recovering Secret” yields zero weights at an existing target because it multiplies by zero and uses `INV[0] = 0`. `Field.lagrange` uses the standard product excluding the current index, extending evaluation to existing indices. `Shares.interpolate` returns the validated existing message directly. `Shares.derive` enforces the BIP's fresh-target condition. This extension is explicit, not behavior attributed to the reference snippet.
+- **Arbitrary padding:** “Master seed format” permits nonzero discarded bits. Decoding retains every complete byte and discards at most four bits. Re-encoding bytes with default zero padding need not reproduce the original text or derived shares. Parsed `Message`s preserve the full payload, so serialization and share recovery preserve padding.
+- **Checksum helper bounds:** The inline long-only verifier checks the upper bound; `Checksum.verifyLong` follows it. Use `Checksum.verify` for the required automatic selection, which rejects expanded lengths 94, 95, and greater than 1023. The checked constructor also rejects oversized codewords, although the raw Python creation helper has no explicit maximum check.
+- **Low-level checksum constructors:** `Checksum.createRegular` and `Checksum.createLong` remain public primitives. Their callers choose the variant and enforce its bounds. Prefer `Checksum.create` or `Encoding.serialize` for automatic selection.
+- **Parser input bound:** The maximum printed string is 1,021 ASCII characters: the `ms1` prefix plus at most 1,018 data symbols. `Encoding.parse` rejects larger UTF-8 byte sizes before allocating character lists or normalizing case. Non-ASCII input within this bound is rejected separately.
+- **Zero inversion:** `Field.inv 0 = 0` follows the BIP table; it is not a multiplicative inverse. Validated share operations require distinct indices and avoid zero denominators.
+- **Error correction:** Invalid checksums are rejected. Optional correction suggestions from “Error Correction” are not implemented; the BIP does not specify an algorithm, and correction is outside this minimal encoder/decoder. No correction is applied implicitly.
+- **Identifiers:** The BIP deliberately does not specify identifier selection. Callers choose them; the implementation checks syntax only.
+
+## Proof coverage
+
+Proofs began after the official vector suite passed. All included theorems are checked by Lean's kernel; there are no `sorry`s, custom axioms, or `native_decide` proofs. The automated audit checks every imported project declaration and permits only Lean's standard `propext`, `Classical.choice`, and `Quot.sound` (some statements use fewer). Executable tests and proofs are distinct evidence.
+
+| Invariant | Current proof coverage |
+| --- | --- |
+| Decode after encoding | `bits_roundtrip` for every byte list and padding value; `seed_roundtrip` and `seed_string_roundtrip` for every typed seed, identifier, threshold, and padding value; `parse_serialize` for every generic `Message` |
+| Checksum construction | `Checksum.verify_create` for every successful regular/long construction; `encoded_seed_checksum_valid` proves `Encoding.validChecksum (Seed.encodeString …) = true`; exact lengths, selection, and bounds also proved |
+| Recovery of generated shares | `recover_generated_shares` proves the public `Shares.recover` function returns the source's secret evaluation from any threshold-sized, distinct, non-secret selection generated by a validated source; `recover_generated_existing_secret` returns a secret already present in that source exactly, including metadata and padding |
+| Reinterpolation | `Field.interpolate_reinterpolate` and `checked_reinterpolate_message` prove resampling at an equally sized distinct set of indices preserves interpolation at every target, for arbitrary field values and generic payload lengths |
+| Interpolation at an existing index | `interpolate_at_existing` proves the checked message API behavior; `Field.interpolate_existing` independently proves the scalar Lagrange formula returns the existing value |
+| Supporting invariants | Alphabet and threshold conversion round trips, supported payload lengths, bit reconstruction, field laws, polynomial degree bounds, and polynomial root/evaluation uniqueness |
+
+The recovery theorem covers fresh and existing source sets, every supported threshold (2–9), any order of recovery indices, and every generic payload length, including long shares. It proves that validation of the generated recovery set succeeds. Its source is a `ValidatedShareSet`, whose type carries the interpolation preconditions; the general theorem does not separately prove that each initialization helper returns a valid source for every admissible raw input. The earlier `recover_generated_threshold_two_message` theorem also retains a direct create/derive/recover sequence, and the official vector 2 API result remains kernel-checked.
+
+## Remaining assumptions and limits
+
+Uniform, independent entropy and appropriate identifier selection remain environmental/caller obligations. The CLI trusts the host OS random source; its initialization and entropy quality are not proved. Checksum validity does not authenticate a share or detect a deliberately forged set. GF arithmetic uses variable-time `Nat` operations and immutable lists; constant-time execution and secure memory erasure are not provided. No claim of Shamir secrecy, error-detection distance, side-channel resistance, CLI/OS correctness, or downstream wallet correctness is established by these proofs.
