@@ -9,6 +9,9 @@ import Codex32Proofs.Secrecy
 import Codex32Proofs.FreshSecrecy
 import Codex32Proofs.GF1024
 import Codex32Proofs.Bch
+import Codex32Proofs.Poly
+import Codex32Proofs.Burst
+import Codex32Proofs.Counting
 
 /-! Proof entry point. Build with `lake build Codex32Proofs`.
 The executable library does not import this module. -/

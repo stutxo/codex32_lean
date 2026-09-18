@@ -126,12 +126,15 @@ theorem initializeExisting_observations_shift (secret replacement : Message)
 
 /-- Perfect secrecy for the actual existing-secret sharing API: for any two
 secrets with identical public metadata and payload length, fewer than `k`
-nonsecret shares have exactly the same distribution under `k-1` independently
-uniform full-symbol random payloads. The outcome includes every message field
-and all padding symbols; observations may include initial random-share indices.
-No hypothesis about successful initialization or validation is required. -/
+distinct nonsecret shares have exactly the same distribution under `k-1`
+independently uniform full-symbol random payloads. The outcome includes every
+message field and all padding symbols; observations may include initial
+random-share indices. No hypothesis about successful initialization or
+validation is required. The distinctness hypothesis is no restriction: an
+observation list with duplicates carries the same information as its
+deduplicated form, and any event on it lifts through that map. -/
 theorem initializeExisting_secrecy (secret replacement : Message)
-    (observed : List Symbol)
+    (observed : List Symbol) (_distinct : observed.Nodup)
     (secretIndex : secret.index = 16) (replacementIndex : replacement.index = 16)
     (nonzero : secret.threshold.count ≠ 0)
     (threshold : secret.threshold = replacement.threshold)
@@ -157,7 +160,7 @@ theorem initializeExisting_secrecy (secret replacement : Message)
 for either supplied secret: these equal numerators share the positive
 denominator `32^((k-1)*payloadLength)`. -/
 theorem initializeExisting_secrecy_event (secret replacement : Message)
-    (observed : List Symbol)
+    (observed : List Symbol) (distinct : observed.Nodup)
     (secretIndex : secret.index = 16) (replacementIndex : replacement.index = 16)
     (nonzero : secret.threshold.count ≠ 0)
     (threshold : secret.threshold = replacement.threshold)
@@ -170,7 +173,7 @@ theorem initializeExisting_secrecy_event (secret replacement : Message)
       (fun entropy => observeExisting secret entropy observed)).countP event =
     ((Uniform.allEntropy (secret.threshold.count - 1) secret.payload.length).map
       (fun entropy => observeExisting replacement entropy observed)).countP event :=
-  (initializeExisting_secrecy secret replacement observed secretIndex replacementIndex
+  (initializeExisting_secrecy secret replacement observed distinct secretIndex replacementIndex
     nonzero threshold identifier length secretNotObserved fewObserved).countP_eq event
 
 end Codex32.Secrecy
