@@ -1,7 +1,8 @@
 import Codex32.Seed
 
-/-! Bounded, noninteractive secret input and hexadecimal conversion for the CLI. -/
-namespace Codex32Cli.Input
+/-! Bounded, noninteractive fixture input and hexadecimal conversion for the
+CLI integration-test harness. -/
+namespace Codex32Test.Cli.Input
 
 /-- Read at most `limit + 1` bytes before rejecting, including short reads.
 The extra byte distinguishes exact-size input from a longer stream. -/
@@ -69,4 +70,4 @@ def shareLines (s : String) : Except String (List String) := do
     throw "each share must be a nonempty codex32 string of at most 1021 bytes"
   return lines
 
-end Codex32Cli.Input
+end Codex32Test.Cli.Input

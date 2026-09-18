@@ -1,18 +1,22 @@
 import Codex32
-import Codex32Cli.Input
-import Codex32Cli.Random
+import Codex32Test.Cli.Input
+import Codex32Test.Cli.Random
 
-namespace Codex32Cli
+/-! Command-line integration-test harness for exercising the executable
+specification with public fixtures. This is not a reference CLI. -/
+namespace Codex32Test.Cli
 open Codex32
 
-private def help : String := "codex32_cli — offline BIP 93 seed sharing
+private def help : String := "codex32_test_cli — BIP 93 integration-test harness
+
+For disposable test fixtures. This harness is not a reference CLI.
 
 Usage:
-  codex32_cli encode IDENTIFIER [THRESHOLD [PADDING]] < seed.hex
-  codex32_cli decode < secret.codex32
-  codex32_cli split IDENTIFIER THRESHOLD COUNT < seed.hex
-  codex32_cli recover < shares.codex32
-  codex32_cli --help
+  codex32_test_cli encode IDENTIFIER [THRESHOLD [PADDING]] < fixture.hex
+  codex32_test_cli decode < fixture.codex32
+  codex32_test_cli split IDENTIFIER THRESHOLD COUNT < fixture.hex
+  codex32_test_cli recover < fixture-shares.codex32
+  codex32_test_cli --help
 
 encode: one hexadecimal seed on stdin; output one codex32 secret.
         THRESHOLD defaults to 0; PADDING defaults to 0 (range 0..31).
@@ -24,20 +28,19 @@ recover: exactly THRESHOLD distinct shares on stdin, one per line;
 IDENTIFIER is four Bech32 characters. Threshold is 0 or 2..9 for encode,
 and 2..9 for split. Split count must be between threshold and 31.
 Seed sizes are 16, 20, 24, 28, 32, or 64 bytes. LF and CRLF are accepted.
-Input is bounded; blank lines and extra input are rejected. Secrets are
-accepted only through redirected/piped stdin, never as command arguments.
+Input is bounded; blank lines and extra input are rejected. Fixture contents
+are accepted through redirected/piped stdin, never as command arguments.
 
-Examples (files contain your private input, not command-line secrets):
-  umask 077
-  codex32_cli encode cash < seed.hex > secret.codex32
-  codex32_cli split cash 3 5 < seed.hex > shares.codex32
-  codex32_cli recover < selected-three-shares.codex32 > recovered.hex
+Examples using the public BIP 93 vector 3 seed:
+  printf '%s\\n' ffeeddccbbaa99887766554433221100 | codex32_test_cli encode cash 3
+  printf '%s\\n' ffeeddccbbaa99887766554433221100 | codex32_test_cli split cash 3 5
 
-Split obtains independent uniform symbols from /dev/urandom on Linux/macOS.
+Run all stream, entropy-adapter, and CLI integration tests:
+  bash scripts/test-cli.sh
+
+Randomized split tests obtain uniform symbols from /dev/urandom on Linux/macOS.
 OS randomness must be initialized; read failures abort without a fallback.
 Output indices follow Bech32 order q,p,z,..., skipping the secret index s.
-This CLI does not provide constant-time arithmetic or secure memory erasure.
-Do not leave all shares or recovered seeds together in storage.
 "
 
 private inductive Command where
@@ -140,6 +143,6 @@ def main (args : List String) : IO UInt32 := do
     | _ => IO.eprintln "codex32: IO failed; check redirected files and the OS randomness source"
     return 1
 
-end Codex32Cli
+end Codex32Test.Cli
 
-def main : List String → IO UInt32 := Codex32Cli.main
+def main : List String → IO UInt32 := Codex32Test.Cli.main

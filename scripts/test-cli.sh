@@ -1,13 +1,14 @@
 #!/usr/bin/env bash
-# Public, disposable fixtures only. Does not require Python or an external RNG.
+# CLI integration-test harness; public, disposable fixtures only.
+# Does not require Python or an external RNG.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 if [[ -d .toolchain/bin ]]; then
   export PATH="$PWD/.toolchain/bin:$PATH"
 fi
-lake build codex32_cli
-lake env lean --run Codex32Cli/Tests.lean
-cli="$PWD/.lake/build/bin/codex32_cli"
+lake build codex32_test_cli
+lake env lean --run Codex32Test/Cli/Tests.lean
+cli="$PWD/.lake/build/bin/codex32_test_cli"
 umask 077
 scratch=$(mktemp -d)
 trap 'rm -rf "$scratch"' EXIT

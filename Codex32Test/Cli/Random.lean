@@ -1,12 +1,13 @@
 import Codex32.Alphabet
 
-/-! OS randomness for the optional CLI. The executable library has no IO dependency
-on this module. No deterministic PRNG or entropy fallback is used. -/
-namespace Codex32Cli.Random
+/-! OS randomness for the CLI integration-test harness. The executable
+specification does not depend on this module. No deterministic PRNG or entropy
+fallback is used. -/
+namespace Codex32Test.Cli.Random
 
 /-- A bounded exact read that handles short reads and rejects premature EOF.
 The function argument permits testing OS-read behavior without replacing the
-production entropy source. -/
+OS entropy source. -/
 def readExact (read : USize → IO ByteArray) (count : Nat) : IO ByteArray := do
   if count > 4096 then throw (IO.userError "randomness request exceeds CLI limit")
   let mut bytes := ByteArray.empty
@@ -31,4 +32,4 @@ def symbols (count : Nat) : IO (List Codex32.Symbol) := do
     readExact handle.read count
   return bytes.data.toList.map fun b => Codex32.Symbol.ofNat b.toNat
 
-end Codex32Cli.Random
+end Codex32Test.Cli.Random

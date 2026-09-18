@@ -15,7 +15,5 @@ lean_lib Codex32Test
 
 lean_lib Codex32Proofs
 
-lean_lib Codex32Cli
-
-lean_exe codex32_cli where
-  root := `Codex32Cli.Main
+lean_exe codex32_test_cli where
+  root := `Codex32Test.Cli.Main

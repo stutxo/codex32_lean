@@ -1,9 +1,9 @@
-import Codex32Cli.Input
-import Codex32Cli.Random
+import Codex32Test.Cli.Input
+import Codex32Test.Cli.Random
 
 /-! Boundary tests for byte-stream adapters; executable integration tests are in
 `scripts/test-cli.sh`. These inputs are disposable, public test data. -/
-namespace Codex32Cli.Tests
+namespace Codex32Test.Cli.Tests
 
 private def check (condition : Bool) (name : String) : IO Unit :=
   unless condition do throw (IO.userError s!"CLI stream check failed: {name}")
@@ -51,6 +51,6 @@ def main : IO Unit := do
     check (occurrences.length == 8) "byte-to-symbol mapping is balanced"
   IO.println "CLI stream and entropy checks passed"
 
-end Codex32Cli.Tests
+end Codex32Test.Cli.Tests
 
-def main : IO Unit := Codex32Cli.Tests.main
+def main : IO Unit := Codex32Test.Cli.Tests.main
