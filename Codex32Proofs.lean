@@ -12,6 +12,7 @@ import Codex32Proofs.Bch
 import Codex32Proofs.Poly
 import Codex32Proofs.Burst
 import Codex32Proofs.Counting
+import Codex32Proofs.ReferenceLagrange
 
 /-! Proof entry point. Build with `lake build Codex32Proofs`.
 The executable library does not import this module. -/

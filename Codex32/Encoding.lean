@@ -43,6 +43,8 @@ def maxStringBytes : Nat := 1021
 def parse (s : String) : Except Error Message := do
   -- Check the stored UTF-8 byte size before allocating character or symbol lists.
   -- Every valid string is ASCII, so this preserves the full valid length range.
+  -- A character-count guard would add a scan without rejecting any further input:
+  -- every character occupies at least one byte.
   if s.utf8ByteSize > maxStringBytes then throw .codewordTooLong
   if s.toList.any (fun c => c.toNat < 33 || c.toNat > 126) then
     throw .nonAscii

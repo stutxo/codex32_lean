@@ -7,7 +7,7 @@ if [[ -d .toolchain/bin ]]; then
   export PATH="$PWD/.toolchain/bin:$PATH"
 fi
 lake build codex32_test_cli
-lake env lean --run Codex32Test/Cli/Tests.lean
+lake test
 cli="$PWD/.lake/build/bin/codex32_test_cli"
 umask 077
 scratch=$(mktemp -d)

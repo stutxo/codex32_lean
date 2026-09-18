@@ -88,7 +88,7 @@ private theorem printable_lower_byteSize (s : String) (h : Spec.Printable s) :
 
 theorem alphabet_decode_sound (c : Char) (v : Symbol)
     (h : Alphabet.decode c = some v) : Alphabet.encode v = c.toLower := by
-  unfold Alphabet.decode at h
+  unfold Alphabet.decode Alphabet.index? at h
   dsimp only at h
   split at h
   · cases h

@@ -12,7 +12,7 @@ A minimal Lean library implementing [BIP 93](https://github.com/bitcoin/bips/blo
 
 The original implementation, proofs, and project documentation are licensed under the [MIT License](LICENSE). The vendored BIP 93 specification and its test vectors retain their authors' [BSD-3-Clause license](spec/LICENSE).
 
-For reporting security concerns, see [SECURITY.md](SECURITY.md).
+For reporting security concerns, see [SECURITY.md](SECURITY.md). Contribution guidance and required local checks are in [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Library usage
 
@@ -23,7 +23,7 @@ open Codex32
 
 Import `Codex32` to use the library; it imports neither proofs, tests, nor CLI modules. `Encoding.parse` validates the generic format; `Seed.parse` additionally restricts it to master-seed secret/share sizes. `Seed.decodeString` requires a secret at index `s`. APIs use `Except Codex32.Error` for invalid external input; callers can pattern-match cases such as `.invalidChecksum` or use `toString` for display.
 
-`Seed.ofBytes` constructs a seed only at a supported length. `Identifier.parse` requires four Bech32 symbols. `Threshold.ofNat` accepts 0 or 2–9. `Seed.encode seed identifier threshold padding` returns a `Message`; `Seed.encodeString` additionally serializes it. Padding defaults to zero; its low required bits may be chosen arbitrarily. `Message` carries proof fields enforcing the zero-threshold/index rule and maximum payload size. Checksums are derived during serialization, avoiding stale stored checksum fields.
+`Seed.ofBytes` constructs a seed only at a supported length. `Identifier.parse` requires four Bech32 symbols; `Identifier.ofString?` provides an `Option` result when detailed errors are unnecessary. Both accept either case. `Threshold.ofNat` accepts 0 or 2–9. `Seed.encode seed identifier threshold padding` returns a `Message`; `Seed.encodeString` additionally serializes it. Padding defaults to zero; its low required bits may be chosen arbitrarily. `Message` carries proof fields enforcing the zero-threshold/index rule and maximum payload size. Checksums are derived during serialization, avoiding stale stored checksum fields.
 
 `Shares.initializeFresh threshold identifier payloads` takes exactly `k` random full-symbol payloads at a supported master-seed size. `Shares.initializeExisting secret payloads` takes `k−1` such payloads and returns an interpolation set including the encoded secret; it also accepts generic application payload sizes, as specified by “For an existing secret”. Initial indices are `a,c,d,e,f,g,h,j,k` as required. Use `Shares.derive initial target` for a fresh target, `Shares.interpolate` for any target, and `Shares.recover shares` for exactly `k` distinct non-secret shares with matching threshold, identifier, and length. There are 31 non-secret field indices.
 
@@ -47,6 +47,7 @@ Codex32Test/
   VectorProofs.lean         # kernel-checked official-vector recovery
   Cli/                      # test-only command-line harness
     Main.lean
+    Command.lean            # command runner shared with failure tests
     Input.lean
     Random.lean
     Tests.lean
@@ -88,6 +89,7 @@ Proofs began after the official vector suite passed. All included theorems are c
 | Shamir secrecy | `initializeExisting_secrecy` proves that any two secrets with the same public metadata and payload length give identical distributions for observation lists of fewer-than-threshold non-secret indices, with duplicates allowed and counted toward the list-length bound. `initializeFresh_secrecy` proves equal joint counts for any two fresh secret payloads and every event on those observed messages. Both use the actual initialization/validation/interpolation pipeline with independently uniform full-symbol entropy, including padding |
 | Reinterpolation | `Field.interpolate_reinterpolate` and `checked_reinterpolate_message` prove resampling at an equally sized distinct set of indices preserves interpolation at every target, for arbitrary field values and generic payload lengths |
 | Interpolation at an existing index | `interpolate_at_existing` proves the checked message API behavior; `Field.interpolate_existing` independently proves the scalar Lagrange formula returns the existing value |
+| Reference Lagrange weights | `Field.referenceLagrange_eq_lagrange` proves a transcription of BIP 93's inline `bech32_lagrange` equals `Field.lagrange` at every fresh target, using the same field operations and inverse table |
 | Checksum error detection (BCH distance) | `GF1024.regular_detection` and `GF1024.long_detection`: any two equal-length valid strings within a checksum period that differ in at most eight symbols are identical — the BIP's "guarantees detection of any error changing at most 8 symbols" claim, proved rather than assumed. `verifyRegular_detects`/`verifyLong_detects` package the same claim for the executable verifiers |
 | Checksum correction uniqueness | `GF1024.regular_substitutions_unique`/`long_substitutions_unique`: any two equal-length valid strings within distance four of a common received string are identical. If the original is within that radius, every valid correction within the radius is the original. `GF1024.regular_erasures_unique`/`long_erasures_unique`: two valid strings agreeing at every position outside an erasure set of at most eight positions are identical — at most one valid completion of an erased string exists |
 | Burst-erasure uniqueness | `regular_burst_valid`/`long_burst_valid`: two equal-length valid strings agreeing outside a consecutive window of at most 13 (regular) or 15 (long) symbols are identical — the BIP's "up to 13/15 consecutive erasures" claim, proved. The register recurrence is shown to perform polynomial reduction modulo the generator (`regular_bridge`/`long_bridge`), so an equal residue makes the generator divide the difference polynomial; a burst-shaped difference is `xˢ·W` with `W` shorter than the generator, forcing `W = 0` via the monic-product support theorem in `Codex32Proofs.Poly` |
@@ -106,6 +108,7 @@ The secrecy proof compares full distributions, including correlations between pa
 With Lean's `elan` installed, the pinned `lean-toolchain` selects the compiler:
 
 ```sh
+python3 scripts/check-whitespace.py
 lake build
 lake test
 lake build Codex32Proofs Codex32Test.VectorProofs
@@ -119,7 +122,7 @@ In the original workspace, the official toolchain was also downloaded locally:
 export PATH="$PWD/.toolchain/bin:$PATH"
 ```
 
-`lake build` builds only the pure library. `lake test` builds and runs the native test executable, failing on any mismatch. Proof checking is explicit and separate. The audit covers the general proofs and the official-vector proof, rejecting project declarations that depend on admissions, native proof evaluation, or nonstandard axioms; it is not a secret scanner. The CLI script builds the test harness and runs its stream, entropy-adapter, and integration tests. All five checks run in GitHub Actions.
+`lake build` builds only the pure library. `lake test` builds and runs the native test executable, including CLI stream, entropy, and output-failure tests, failing on any mismatch. Proof checking is explicit and separate. The audit covers the general proofs and the official-vector proof, rejecting project declarations that depend on admissions, native proof evaluation, or nonstandard axioms; it is not a secret scanner. The CLI script also builds the test harness and runs its integration tests. All checks run in GitHub Actions. The whitespace check enforces UTF-8, LF endings, no tabs or trailing whitespace, and a final newline; `.editorconfig` requests two-space indentation. The pinned Lake version does not provide `lake fmt`.
 
 ### CLI test harness
 
@@ -151,9 +154,9 @@ All Codex32 portions of test vectors 1–8 and all invalid examples pass:
 - Fresh/existing-secret generation and every official derived share.
 - All three pairs from vector 2 and all ten three-share subsets from vector 3.
 
-The library suite currently reports **36,294 checks**. Additional tests cover every supported seed size and threshold, all 31 share indices, replaced-share recovery, GF(32) identities, interpolation, structured errors, rejected metadata mismatches, generic existing-secret payloads, and checksum boundaries through expanded length 1023. Oversized ASCII and UTF-8 inputs exercise rejection before character conversion.
+The library suite currently reports **36,298 checks**. Additional tests cover every supported seed size and threshold, all 31 share indices, replaced-share recovery, GF(32) identities, interpolation, structured errors, rejected metadata mismatches, generic existing-secret payloads, and checksum boundaries through expanded length 1023. Oversized ASCII and UTF-8 inputs exercise rejection before character conversion.
 
-The CLI test harness has **113 integration checks** covering official encodings/recovery, all supported seed sizes, long shares at thresholds 2–9 with every threshold-sized subset of `k+1` outputs, all 31 indices, and malformed/oversized input. Adapter tests cover bounded consumption, short reads, entropy EOF and read failures, and the uniform byte-to-symbol mapping.
+The CLI test harness has **113 integration checks** covering official encodings/recovery, all supported seed sizes, long shares at thresholds 2–9 with every threshold-sized subset of `k+1` outputs, all 31 indices, and malformed/oversized input. Another **58 CLI checks** run by `lake test` cover bounded consumption, short reads, exact entropy failure diagnostics, the uniform byte-to-symbol mapping, and no output on validation or entropy failure. Simulated output-device failures verify that a partial write or failed flush returns failure with a generic diagnostic; already-written output can remain truncated.
 
 The BIP's example `xprv` strings are retained as fixture metadata. Computing BIP 32 extended private keys requires HMAC-SHA512 and curve/key serialization outside BIP 93; these downstream values are **not tested** here. The Codex32 layer is tested through the exact master-seed bytes those examples supply.
 
@@ -175,7 +178,7 @@ This revision permits master seeds of **16, 20, 24, 28, 32, or 64 bytes**. It se
 - **Zero inversion:** `Field.inv 0 = 0` follows the BIP table; it is not a multiplicative inverse. Validated share operations require distinct indices and avoid zero denominators.
 - **Error correction:** Invalid checksums are rejected. Optional correction suggestions from “Error Correction” are not implemented; the BIP does not specify an algorithm, and correction is outside this minimal encoder/decoder. No correction is applied implicitly.
 - **Identifiers:** The BIP deliberately does not specify identifier selection. Callers choose them; the implementation checks syntax only.
-- **Reference-code equivalence:** The BIP's helper interpolates every position of a complete data part, including its checksum. This library interpolates payloads, constructs the header, and regenerates the checksum when serializing. Official-vector interoperability is tested, but a general theorem equating these full results remains unproved. Likewise, the algebraic equivalence of the optimized BIP weights and our standard Lagrange product for pairwise-distinct source indices and a fresh target has not been formalized directly.
+- **Reference-code equivalence:** `Field.referenceLagrange_eq_lagrange` proves that a transcription of the optimized BIP weights agrees with our standard Lagrange product at every fresh target. Weight equality itself does not require distinct source indices; distinctness remains necessary for interpolation. The BIP's full helper interpolates every position of a complete data part, including its checksum. This library interpolates payloads, constructs the header, and regenerates the checksum when serializing. Official-vector interoperability is tested, but a general theorem equating these full results remains unproved.
 - **Reference probability typo:** The pinned BIP rationale prints `1 - 2^65`, evidently missing the negative exponent in `1 - 2^-65`. Correcting that expression is an editorial change, not a proof of the random-error probability claims.
 
 [Issue #1](https://github.com/stutxo/codex32_lean/issues/1) tracks these reference-helper clarifications, reproducible examples, and the remaining equivalence proof work. The vendored BIP snapshot is retained unmodified.

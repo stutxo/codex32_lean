@@ -15,10 +15,15 @@ def chars : List Char := "qpzry9x8gf2tvdw0s3jn54khce6mua7l".toList
 
 def encode (v : Symbol) : Char := chars[v.val]'(by exact v.isLt)
 
-/-- Values are case insensitive; the enclosing string parser enforces uniform case. -/
-def decode (c : Char) : Option Symbol :=
-  let n := chars.idxOf c.toLower
+/-- Look up a lowercase alphabet character. `List.idxOf` returns the list length
+when the character is absent, so the bounds check converts that sentinel to `none`.
+The alphabet has exactly 32 characters. -/
+def index? (c : Char) : Option Symbol :=
+  let n := chars.idxOf c
   if h : n < 32 then some ⟨n, h⟩ else none
+
+/-- Values are case insensitive; the enclosing string parser enforces uniform case. -/
+def decode (c : Char) : Option Symbol := index? c.toLower
 
 def encodeList (vs : List Symbol) : String := String.ofList (vs.map encode)
 
@@ -65,6 +70,10 @@ def parse (s : String) : Except Error Identifier := do
   let symbols ← Alphabet.decodeList s
   if h : symbols.length = 4 then return ⟨symbols, h⟩
   else throw .invalidIdentifierLength
+
+/-- Parse a four-symbol identifier when the detailed error is not needed.
+Like `parse`, this accepts either case and stores alphabet values. -/
+def ofString? (s : String) : Option Identifier := (parse s).toOption
 
 def toString (id : Identifier) : String := Alphabet.encodeList id.symbols
 end Identifier

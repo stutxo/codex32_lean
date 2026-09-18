@@ -1,6 +1,7 @@
 import Codex32.Seed
 import Codex32.Shares
 import Codex32Test.Vectors
+import Codex32Test.Cli.Tests
 
 /-! Executable tests, deliberately separate from the formal proofs. -/
 namespace Codex32.Tests
@@ -54,6 +55,10 @@ private def testAlphabet : TestM Unit := do
   check "short identifier rejected" (rejected (Identifier.parse "abc"))
   check "long identifier rejected" (rejected (Identifier.parse "abcde"))
   check "invalid identifier rejected" (rejected (Identifier.parse "b???"))
+  checkEq "optional identifier parsing canonicalizes uppercase"
+    ((Identifier.ofString? "CASH").map Identifier.toString) (some "cash")
+  for text in ["ca!h", "cas", "caéh"] do
+    checkEq "optional identifier parsing rejects malformed text" (Identifier.ofString? text) none
 
 private def testOfficialVectors : TestM Unit := do
   checkEq "official valid fixture count" Vectors.validStrings.length 34
@@ -305,6 +310,8 @@ private def run : TestM Unit := do
 end Codex32.Tests
 
 def main : IO Unit := do
+  let cliCount ← Codex32Test.Cli.Tests.run
+  IO.println s!"PASS: {cliCount} CLI stream, entropy, command, and output-failure checks."
   match Codex32.Tests.run.run 0 with
   | .ok (_, count) => IO.println s!"PASS: {count} checks; all 34 valid and 55 invalid official BIP 93 strings."
   | .error error => throw (IO.userError s!"FAIL: {error}")
