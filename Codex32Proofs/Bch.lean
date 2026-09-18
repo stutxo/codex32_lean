@@ -1141,6 +1141,304 @@ theorem verifyLong_detects (c1 c2 : List Symbol) (hlen : c1.length = c2.length)
   obtain ⟨hb2, hp2⟩ := h2
   exact long_detection c1 c2 hlen (of_decide_eq_true hb1) (hp1.trans hp2.symm) hwt
 
+
+/-- A filtered list counts at most one element when all its members agree. -/
+private theorem filter_const_length_le_one (l : List Nat) (a : Nat) (hnodup : l.Nodup)
+    (h : ∀ x ∈ l, x = a) : l.length ≤ 1 := by
+  cases l with
+  | nil => simp
+  | cons x xs =>
+    have hx : x = a := h x (by simp)
+    have hnotin : x ∉ xs := (List.nodup_cons.mp hnodup).1
+    cases xs with
+    | nil => simp
+    | cons y ys =>
+      have hy : y = a := h y (by simp)
+      rw [hy, ← hx] at hnotin
+      exact absurd List.mem_cons_self hnotin
+
+/-- The filter/not-filter count split. -/
+private theorem length_filter_split (l : List α) (p : α → Bool) :
+    (l.filter p).length + (l.filter (fun a => !p a)).length = l.length := by
+  induction l with
+  | nil => rfl
+  | cons a as ih =>
+    by_cases ha : p a = true
+    · rw [List.filter_cons_of_pos ha, List.filter_cons_of_neg (by simp [ha])]
+      simp only [List.length_cons]
+      omega
+    · rw [List.filter_cons_of_neg (by simp [ha]), List.filter_cons_of_pos (by simp [ha])]
+      simp only [List.length_cons]
+      omega
+
+/-- A duplicate-free list of members of `E` is no longer than `E`. -/
+private theorem nodup_length_le_of_all_mem (l E : List Nat) (hnodup : l.Nodup)
+    (hmem : ∀ x ∈ l, x ∈ E) : l.length ≤ E.length := by
+  induction E generalizing l with
+  | nil =>
+    have : l = [] := by
+      cases l with
+      | nil => rfl
+      | cons x xs => exact absurd (hmem x (by simp)) (by simp)
+    rw [this]
+    exact Nat.le_refl _
+  | cons e E' ih =>
+    have hsplit : l.length = (l.filter (· == e)).length + (l.filter (fun x => !(x == e))).length :=
+      (length_filter_split l (· == e)).symm
+    have hle1 : (l.filter (· == e)).length ≤ 1 := by
+      apply filter_const_length_le_one _ e
+      · exact List.Sublist.nodup List.filter_sublist hnodup
+      · intro x hx
+        exact beq_iff_eq.mp (List.mem_filter.mp hx).2
+    have hrest : (l.filter (fun x => !(x == e))).length ≤ E'.length := by
+      apply ih (l.filter (fun x => !(x == e)))
+      · exact List.Sublist.nodup List.filter_sublist hnodup
+      · intro x hx
+        have hxl := (List.mem_filter.mp hx).1
+        have hxne : x ≠ e := by
+          intro heq
+          exact absurd ((List.mem_filter.mp hx).2) (by simp [heq])
+        have hxe : x ∈ e :: E' := hmem x hxl
+        rcases List.mem_cons.mp hxe with h | h
+        · exact absurd h hxne
+        · exact h
+    have hlen : (e :: E').length = E'.length + 1 := by simp
+    omega
+
+/-- The indices where two equal-length symbol lists differ. -/
+private def diffIndices (c1 c2 : List Symbol) : List Nat :=
+  (((c1.zip c2).zipIdx).filter (fun p => p.1.1 ≠ p.1.2)).map Prod.snd
+
+private theorem zip_filter_ne_length_comm (a b : List Symbol) :
+    ((a.zip b).filter (fun p => p.1 ≠ p.2)).length =
+    ((b.zip a).filter (fun p => p.1 ≠ p.2)).length := by
+  induction a generalizing b with
+  | nil => simp
+  | cons x xs ih =>
+    cases b with
+    | nil => simp
+    | cons y ys =>
+      simp only [List.zip_cons_cons]
+      by_cases hxy : x = y
+      · subst hxy
+        rw [List.filter_cons_of_neg (by simp), List.filter_cons_of_neg (by simp)]
+        exact ih ys
+      · have hyx : ¬y = x := fun h => hxy h.symm
+        rw [List.filter_cons_of_pos (by simp [hxy]), List.filter_cons_of_pos (by simp [hyx]),
+          List.length_cons, List.length_cons, ih ys]
+
+private theorem diffIndices_nodup (c1 c2 : List Symbol) : (diffIndices c1 c2).Nodup := by
+  have h : (((c1.zip c2).zipIdx).map Prod.snd).Nodup := by
+    rw [zipIdx_map_snd]
+    exact nodup_map_add_range (c1.zip c2).length 0
+  have hsub : List.Sublist
+      ((((c1.zip c2).zipIdx).filter (fun p => p.1.1 ≠ p.1.2)).map Prod.snd)
+      (((c1.zip c2).zipIdx).map Prod.snd) := by
+    apply List.Sublist.map
+    exact List.filter_sublist
+  exact List.Sublist.nodup hsub h
+
+private theorem diffIndices_length (c1 c2 : List Symbol) :
+    (diffIndices c1 c2).length = ((c1.zip c2).filter (fun p => p.1 ≠ p.2)).length := by
+  rw [diffIndices, List.length_map, zipIdx_filter_length (c1.zip c2) 0 (fun x => decide (x.1 ≠ x.2))]
+
+private theorem mem_diffIndices (c1 c2 : List Symbol) (hlen : c1.length = c2.length)
+    (i : Nat) (hi : i < c1.length)
+    (hdiff : c1[i]'hi ≠ c2[i]'(by omega)) : i ∈ diffIndices c1 c2 := by
+  have hziplen : (c1.zip c2).length = c1.length := by
+    rw [List.length_zip, hlen, Nat.min_self]
+  have hmem : ((c1.zip c2)[i]'(by omega), i) ∈ (c1.zip c2).zipIdx := by
+    have h := mem_zipIdx_of_getElem (c1.zip c2) i (by omega) 0
+    simp only [Nat.zero_add] at h
+    exact h
+  rw [diffIndices, List.mem_map]
+  refine ⟨((c1.zip c2)[i]'(by omega), i), ?_, rfl⟩
+  apply List.mem_filter.mpr
+  constructor
+  · exact hmem
+  · simp only [List.getElem_zip]
+    exact decide_eq_true hdiff
+
+/-- Four-substitution correction is unique: any two valid strings within
+distance four of a received string are identical. -/
+theorem regular_substitutions_unique (received c1 c2 : List Symbol)
+    (hlen1 : received.length = c1.length) (hlen2 : received.length = c2.length)
+    (hbound : 5 + c1.length ≤ 93)
+    (h1 : Checksum.verifyRegular c1 = true) (h2 : Checksum.verifyRegular c2 = true)
+    (hd1 : ((received.zip c1).filter (fun p => p.1 ≠ p.2)).length ≤ 4)
+    (hd2 : ((received.zip c2).filter (fun p => p.1 ≠ p.2)).length ≤ 4) : c1 = c2 := by
+  simp only [Checksum.verifyRegular, Bool.and_eq_true, beq_iff_eq] at h1 h2
+  obtain ⟨hb1, hp1⟩ := h1
+  obtain ⟨hb2, hp2⟩ := h2
+  have hwt : ((c1.zip c2).filter (fun p => p.1 ≠ p.2)).length ≤ 8 := by
+    have hsub : ∀ x ∈ diffIndices c1 c2, x ∈ diffIndices c1 received ++ diffIndices received c2 := by
+      intro x hx
+      rw [diffIndices] at hx ⊢
+      rw [List.mem_append]
+      obtain ⟨p, hp, hpx⟩ := List.mem_map.mp hx
+      have hpf := (List.mem_filter.mp hp).2
+      have hpm := (List.mem_filter.mp hp).1
+      obtain ⟨_, hlt, heq⟩ := List.mem_zipIdx hpm
+      rw [List.getElem_zip] at heq
+      have hc12 : c1.length = c2.length := by omega
+      have hz : (c1.zip c2).length = c1.length := by
+        rw [List.length_zip, hc12, Nat.min_self]
+      have hilt : p.2 < c1.length := by omega
+      simp only [Nat.sub_zero] at heq
+      have h11 : p.1.1 = c1[p.2]'hilt := by
+        rw [heq]
+      have h12 : p.1.2 = c2[p.2]'(by omega) := by
+        rw [heq]
+      have hd : c1[p.2]'hilt ≠ c2[p.2]'(by omega) := by
+        rw [h11, h12] at hpf
+        exact of_decide_eq_true hpf
+      by_cases hcr : c1[p.2]'hilt = received[p.2]'(by omega)
+      · right
+        apply mem_diffIndices _ _ hlen2
+        · show received[x]'(by omega) ≠ c2[x]'(by omega)
+          simp only [← hpx]
+          rw [hcr] at hd
+          exact hd
+      · left
+        apply mem_diffIndices _ _ hlen1.symm
+        · show c1[x]'(by omega) ≠ received[x]'(by omega)
+          simp only [← hpx]
+          exact hcr
+    have hle := nodup_length_le_of_all_mem _ _ (diffIndices_nodup _ _) hsub
+    rw [List.length_append] at hle
+    simp only [diffIndices_length] at hle
+    rw [zip_filter_ne_length_comm c1 received] at hle
+    omega
+  exact regular_detection c1 c2 (by omega) hbound (by rw [hp1, hp2]) hwt
+
+/-- Long-checksum four-substitution uniqueness. -/
+theorem long_substitutions_unique (received c1 c2 : List Symbol)
+    (hlen1 : received.length = c1.length) (hlen2 : received.length = c2.length)
+    (hbound : 5 + c1.length ≤ 1023)
+    (h1 : Checksum.verifyLong c1 = true) (h2 : Checksum.verifyLong c2 = true)
+    (hd1 : ((received.zip c1).filter (fun p => p.1 ≠ p.2)).length ≤ 4)
+    (hd2 : ((received.zip c2).filter (fun p => p.1 ≠ p.2)).length ≤ 4) : c1 = c2 := by
+  simp only [Checksum.verifyLong, Bool.and_eq_true, beq_iff_eq] at h1 h2
+  obtain ⟨hb1, hp1⟩ := h1
+  obtain ⟨hb2, hp2⟩ := h2
+  have hwt : ((c1.zip c2).filter (fun p => p.1 ≠ p.2)).length ≤ 8 := by
+    have hsub : ∀ x ∈ diffIndices c1 c2, x ∈ diffIndices c1 received ++ diffIndices received c2 := by
+      intro x hx
+      rw [diffIndices] at hx ⊢
+      rw [List.mem_append]
+      obtain ⟨p, hp, hpx⟩ := List.mem_map.mp hx
+      have hpf := (List.mem_filter.mp hp).2
+      have hpm := (List.mem_filter.mp hp).1
+      obtain ⟨_, hlt, heq⟩ := List.mem_zipIdx hpm
+      rw [List.getElem_zip] at heq
+      have hc12 : c1.length = c2.length := by omega
+      have hz : (c1.zip c2).length = c1.length := by
+        rw [List.length_zip, hc12, Nat.min_self]
+      have hilt : p.2 < c1.length := by omega
+      simp only [Nat.sub_zero] at heq
+      have h11 : p.1.1 = c1[p.2]'hilt := by
+        rw [heq]
+      have h12 : p.1.2 = c2[p.2]'(by omega) := by
+        rw [heq]
+      have hd : c1[p.2]'hilt ≠ c2[p.2]'(by omega) := by
+        rw [h11, h12] at hpf
+        exact of_decide_eq_true hpf
+      by_cases hcr : c1[p.2]'hilt = received[p.2]'(by omega)
+      · right
+        apply mem_diffIndices _ _ hlen2
+        · show received[x]'(by omega) ≠ c2[x]'(by omega)
+          simp only [← hpx]
+          rw [hcr] at hd
+          exact hd
+      · left
+        apply mem_diffIndices _ _ hlen1.symm
+        · show c1[x]'(by omega) ≠ received[x]'(by omega)
+          simp only [← hpx]
+          exact hcr
+    have hle := nodup_length_le_of_all_mem _ _ (diffIndices_nodup _ _) hsub
+    rw [List.length_append] at hle
+    simp only [diffIndices_length] at hle
+    rw [zip_filter_ne_length_comm c1 received] at hle
+    omega
+  exact long_detection c1 c2 (by omega) hbound (by rw [hp1, hp2]) hwt
+
+/-- Erasure correction is unique: two valid strings agreeing at every
+non-erased position are identical when at most eight positions are erased. -/
+theorem regular_erasures_unique (c1 c2 : List Symbol) (E : List Nat)
+    (hlen : c1.length = c2.length) (hbound : 5 + c1.length ≤ 93)
+    (h1 : Checksum.verifyRegular c1 = true) (h2 : Checksum.verifyRegular c2 = true)
+    (hE : E.length ≤ 8)
+    (hagree : ∀ i : Nat, ∀ hi : i < c1.length, i ∉ E →
+      c1[i]'hi = c2[i]'(by omega)) : c1 = c2 := by
+  simp only [Checksum.verifyRegular, Bool.and_eq_true, beq_iff_eq] at h1 h2
+  obtain ⟨hb1, hp1⟩ := h1
+  obtain ⟨hb2, hp2⟩ := h2
+  have hwt : ((c1.zip c2).filter (fun p => p.1 ≠ p.2)).length ≤ 8 := by
+    have hsub : ∀ x ∈ diffIndices c1 c2, x ∈ E := by
+      intro x hx
+      rw [diffIndices] at hx
+      obtain ⟨p, hp, hpx⟩ := List.mem_map.mp hx
+      have hpf := (List.mem_filter.mp hp).2
+      have hpm := (List.mem_filter.mp hp).1
+      obtain ⟨_, hlt, heq⟩ := List.mem_zipIdx hpm
+      rw [List.getElem_zip] at heq
+      have hz : (c1.zip c2).length = c1.length := by
+        rw [List.length_zip, hlen, Nat.min_self]
+      have hilt : p.2 < c1.length := by omega
+      simp only [Nat.sub_zero] at heq
+      have h11 : p.1.1 = c1[p.2]'hilt := by
+        rw [heq]
+      have h12 : p.1.2 = c2[p.2]'(by omega) := by
+        rw [heq]
+      apply Classical.byContradiction
+      intro hxE
+      have hd : c1[p.2]'hilt ≠ c2[p.2]'(by omega) := by
+        rw [h11, h12] at hpf
+        exact of_decide_eq_true hpf
+      exact hd (hagree p.2 hilt (by rw [hpx]; exact hxE))
+    have hle := nodup_length_le_of_all_mem _ _ (diffIndices_nodup _ _) hsub
+    rw [diffIndices_length] at hle
+    omega
+  exact regular_detection c1 c2 (by omega) hbound (by rw [hp1, hp2]) hwt
+
+/-- Long-checksum erasure uniqueness. -/
+theorem long_erasures_unique (c1 c2 : List Symbol) (E : List Nat)
+    (hlen : c1.length = c2.length) (hbound : 5 + c1.length ≤ 1023)
+    (h1 : Checksum.verifyLong c1 = true) (h2 : Checksum.verifyLong c2 = true)
+    (hE : E.length ≤ 8)
+    (hagree : ∀ i : Nat, ∀ hi : i < c1.length, i ∉ E →
+      c1[i]'hi = c2[i]'(by omega)) : c1 = c2 := by
+  simp only [Checksum.verifyLong, Bool.and_eq_true, beq_iff_eq] at h1 h2
+  obtain ⟨hb1, hp1⟩ := h1
+  obtain ⟨hb2, hp2⟩ := h2
+  have hwt : ((c1.zip c2).filter (fun p => p.1 ≠ p.2)).length ≤ 8 := by
+    have hsub : ∀ x ∈ diffIndices c1 c2, x ∈ E := by
+      intro x hx
+      rw [diffIndices] at hx
+      obtain ⟨p, hp, hpx⟩ := List.mem_map.mp hx
+      have hpf := (List.mem_filter.mp hp).2
+      have hpm := (List.mem_filter.mp hp).1
+      obtain ⟨_, hlt, heq⟩ := List.mem_zipIdx hpm
+      rw [List.getElem_zip] at heq
+      have hz : (c1.zip c2).length = c1.length := by
+        rw [List.length_zip, hlen, Nat.min_self]
+      have hilt : p.2 < c1.length := by omega
+      simp only [Nat.sub_zero] at heq
+      have h11 : p.1.1 = c1[p.2]'hilt := by
+        rw [heq]
+      have h12 : p.1.2 = c2[p.2]'(by omega) := by
+        rw [heq]
+      apply Classical.byContradiction
+      intro hxE
+      have hd : c1[p.2]'hilt ≠ c2[p.2]'(by omega) := by
+        rw [h11, h12] at hpf
+        exact of_decide_eq_true hpf
+      exact hd (hagree p.2 hilt (by rw [hpx]; exact hxE))
+    have hle := nodup_length_le_of_all_mem _ _ (diffIndices_nodup _ _) hsub
+    rw [diffIndices_length] at hle
+    omega
+  exact long_detection c1 c2 (by omega) hbound (by rw [hp1, hp2]) hwt
+
 end GF1024
 
 end Codex32

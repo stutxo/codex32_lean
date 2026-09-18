@@ -590,7 +590,7 @@ theorem vandermonde (α y : List GF1024) (nodup : α.Nodup) (hlen : α.length = 
   intro yj hj
   exact main α.length α y rfl nodup hlen h yj hj
 /-- Indices of a `zipIdx` list, as a shifted range. -/
-theorem zipIdx_map_snd (l : List Symbol) (n : Nat) :
+theorem zipIdx_map_snd (l : List α) (n : Nat) :
     (l.zipIdx n).map Prod.snd = (List.range l.length).map (n + ·) := by
   induction l generalizing n with
   | nil => rfl
@@ -605,7 +605,7 @@ theorem zipIdx_map_snd (l : List Symbol) (n : Nat) :
     simp only [List.zipIdx, List.map_cons, ih, List.length_cons, hcons]
 
 /-- Membership in `zipIdx` from an index lookup. -/
-theorem mem_zipIdx_of_getElem (l : List Symbol) (i : Nat) (h : i < l.length) (n : Nat) :
+theorem mem_zipIdx_of_getElem (l : List α) (i : Nat) (h : i < l.length) (n : Nat) :
     (l[i]'h, n + i) ∈ l.zipIdx n := by
   induction l generalizing i n with
   | nil => simp at h
@@ -623,7 +623,7 @@ theorem mem_zipIdx_of_getElem (l : List Symbol) (i : Nat) (h : i < l.length) (n 
 
 /-- Filtering a `zipIdx` list by a value predicate keeps the same count as
 filtering the value list. -/
-theorem zipIdx_filter_length (l : List Symbol) (n : Nat) (q : Symbol → Bool) :
+theorem zipIdx_filter_length (l : List α) (n : Nat) (q : α → Bool) :
     ((l.zipIdx n).filter (fun p => q p.1)).length = (l.filter q).length := by
   induction l generalizing n with
   | nil => rfl
