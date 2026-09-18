@@ -1,8 +1,18 @@
 # Codex32 in Lean 4
 
+> [!WARNING]
+> **Experimental software for research and testing only.**
+> Do not use this library or its CLI with real wallet seeds or to protect funds.
+> Use public, disposable test data only.
+>
+> The Lean proofs establish specific properties under stated assumptions;
+> they do not establish production readiness or end-to-end security.
+
 A minimal Lean library implementing [BIP 93](https://github.com/bitcoin/bips/blob/55083d36ddebcd2a039135a2f4ee74917a5803d3/bip-0093.mediawiki), with official vectors and a separate, growing collection of kernel-checked proofs. Uses Lean 4.34.0 and its bundled `Std`; no Mathlib, crypto library, or Lake package dependencies.
 
 The original implementation, proofs, and project documentation are licensed under the [MIT License](LICENSE). The vendored BIP 93 specification and its test vectors retain their authors' [BSD-3-Clause license](spec/LICENSE).
+
+For reporting security concerns, see [SECURITY.md](SECURITY.md).
 
 ## Library usage
 
