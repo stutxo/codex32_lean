@@ -10,14 +10,15 @@ namespace Codex32.Proofs
 
 set_option maxHeartbeats 0
 
-private def messageColumn (messages : List Message) (column : Nat) : List (Symbol × Symbol) :=
+/-- Scalar samples for one payload column of a message list. -/
+def messageColumn (messages : List Message) (column : Nat) : List (Symbol × Symbol) :=
   messages.map fun message => (message.index, message.payload[column]?.getD 0)
 
-private theorem messageColumn_indices (messages : List Message) (column : Nat) :
+theorem messageColumn_indices (messages : List Message) (column : Nat) :
     (messageColumn messages column).map Prod.fst = messages.map Message.index := by
   simp [messageColumn, List.map_map]
 
-private theorem messageColumn_length (messages : List Message) (column : Nat) :
+theorem messageColumn_length (messages : List Message) (column : Nat) :
     (messageColumn messages column).length = messages.length := by
   simp [messageColumn]
 
@@ -41,7 +42,9 @@ private theorem checked_interpolatePayload_column (checked : Shares.ValidatedSha
   rw [messageColumn_bounded checked column bound]
   simp [Shares.ValidatedShareSet.interpolatePayload, bound]
 
-private theorem checked_interpolate_column (checked : Shares.ValidatedShareSet)
+/-- Checked message interpolation agrees with the executable scalar formula
+at every payload coordinate, including when the requested index is present. -/
+theorem checked_interpolate_column (checked : Shares.ValidatedShareSet)
     (target : Symbol) (column : Nat) (bound : column < checked.first.payload.length) :
     (checked.interpolate target).payload[column]?.getD 0 =
       Field.interpolate (messageColumn checked.messages column) target := by
